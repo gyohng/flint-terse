@@ -1,70 +1,73 @@
 # flint-terse
 
-Compress Flint's `<think>` into working notes and equations while keeping final replies fluent and complete. The earlier adapter `adapters/prompt-half` is installed in LM Studio as `flint-terse-prompt-half`. It still restates requests and can quote its learned instruction as user text. It is an experimental baseline, not a finished solution to that behavior.
+Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. The current recipe tunes existing thinking-token embeddings and a small attention adapter. It adds no text to the prompt.
 
-```sh
-lms load flint-terse-prompt-half --identifier flint-terse --context-length 16384 --parallel 1 --gpu max --no-speculative-draft-mtp -y
-```
-
-Use `flint-terse` as the API model name. That older GGUF includes a 17-token learned prefix in its chat template. Current prefix experiments place the instruction before the first user message; output-head experiments add no instruction.
+The older `flint-terse-prompt-half` is installed in LM Studio but unloaded. Its chat template appends a learned 17-token instruction to the user message; that caused the quoted “Think in brief working notes…” line. It is not a finished solution. No replacement has been installed yet.
 
 ## Current result
 
-**Reliable recap removal is not solved.** The best recent attention adapter, `adapters/on-policy-qv`, scored 44/50 versus base Flint’s 45/50. It used 26% fewer thinking tokens on the 43 questions both answered correctly, but still recapped ordinary requests. It has not been exported or installed.
+**Reliable recap removal with preserved accuracy is not solved.** The current run, `adapters/correctness-qv`, adds checked correctness preferences to the training objective. It has not been evaluated or exported.
 
 These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and a 4,096-token budget:
 
-| Model | Correct | Thinking tokens across all 50 tasks |
+| Model | Correct | Thinking reduction on shared correct answers |
 |---|---:|---:|
-| Base Flint | 45/50 | 55,113 |
-| `no-recaps-95` learned prefix | 42/50 | 5,169 |
-| `on-policy-qv` attention adapter | 44/50 | 43,072 |
+| Base Flint | 45/50 | — |
+| `on-policy-qv` attention adapter | 44/50 | 26%; still recaps |
+| `think-attention` native tokens + attention | 40/50 | 93%; loses accuracy |
 
-The stronger prefix compression loses accuracy. Resuming that prefix on checked self-generated responses scored only 38/50. Opening-preference experiments produced malformed wording or leaked thinking into final replies; their rejected-text penalty was removed. The current experiment supervises useful openings directly, adds more reviewed prose, and preserves answer probabilities from the original full-thinking teacher.
-
-The older installed `prompt-half` remains experimental too. On an earlier 100-task comparison it scored 94/100 versus base 89/100, but a second code run scored 34/40 versus base 35/40. Its LM Studio OpenClaw check scored 15/24 versus 17/24, while six multi-turn tool episodes passed versus four for the original model. Those deployment comparisons also differ in quantization.
-
-Captures are in `runs/fresh-{base,start,on-policy-qv}.jsonl`. Existing evaluation sets have been used for development. `data/release-eval.jsonl` reserves 100 unseen math/code tasks for a candidate that passes the ordinary-response checks.
+Captures are in `runs/fresh-{base,on-policy-qv,think-attention}.jsonl`. These are development results, not independent proof of generalization. `data/release-eval.jsonl` reserves 100 unseen math/code tasks; `data/release-chat.jsonl` adds six ordinary and multistep requests. Neither has been used yet.
 
 ## How it works
 
-The attention adapter learns 557,056 values in rank-8 query/value updates across the last eight transformer layers. It adds no instruction to the prompt. The older deployed model instead learns 17 reserved-token embeddings, inserted before the assistant; this is where the sentence quoted in its thinking came from.
+The native-token adapter learns 4,096 values in the existing `<think>` and `</think>` input embeddings. These stay frozen during the next stage, which learns 557,056 values in rank-8 query/value updates across the last eight transformer layers. The output head and other model weights stay frozen.
 
-Training uses Flint’s probabilities. Compact thinking receives supervised loss, while KL divergence keeps final-answer probabilities near a frozen teacher conditioned on its original full thinking. Verified answer content can also receive supervised loss; its end-of-turn token receives no extra reward. Final replies have no shortening objective. This encourages a small behavioral change, but does not guarantee the globally shortest equivalent reasoning or unchanged accuracy.
+Training uses Flint’s probabilities in three ways:
 
-The current training mix has **180 reviewed pairs: 135 train, 45 validation**—66 math, 56 code, 13 with the real OpenClaw context and 45 ordinary requests. The original 386-pair corpus remains available. New self-generated traces retain their matching answers; weak tests, contradictory reasoning and incorrect replies are rejected or replaced by a checked native solution. Some difficult tasks keep long reasoning. The 23 additional prose pairs preserve their native final replies and use reviewed working notes.
+- Supervised loss teaches reviewed working notes. Some difficult examples retain longer reasoning.
+- KL divergence anchors final-answer probabilities to a frozen teacher conditioned on the original thinking. Verified answers also receive supervised loss, with extra weight on their opening to preserve language and format.
+- DPO prefers a correct complete response over Flint's own checked mistake, relative to the frozen starting model's likelihood ratio. It uses the entire response, including thinking.
 
-`--opening-only` supervises the first 16 reasoning tokens, plus the opening tag, with a fixed normalization so empty thoughts do not dominate. It leaves later reasoning available and keeps the original full-thinking answer teacher. `--resume` continues a compatible attention adapter with a fresh optimizer. This is still an experiment requiring generation checks.
+Final replies have no shortening objective. Probability anchoring encourages a small behavioral change; it cannot guarantee unchanged accuracy or the shortest equivalent reasoning.
+
+The current corpus has **410 reviewed pairs: 365 train, 45 validation**—189 math, 147 code, 26 OpenClaw and 48 prose. Of these, 137 training and 19 validation examples include a checked incorrect response. `data/adaptive-sampled.jsonl` contains 59 reliable self-generated traces with their matching answers; `data/adaptive-native.jsonl` contains 351 reviewed native pairs. Code tests and numeric checks guide selection, followed by review. More examples alone do not establish quality.
 
 ## Train and evaluate
 
 Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified memory. The checkpoint uses about 22.6 GB, the GGUF 42.6 GB, and export needs roughly 170 GB temporary free space. Unload LM Studio models before training.
 
-The following reconstructs the current experiment from the reviewed corpora. The learned prefix supplies a probability teacher; the final attention adapter does not use it at inference.
+Using the existing `adapters/think-tokens` checkpoint, rebuild the frozen answer features and train the current attention recipe:
 
 ```sh
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
 ./run.sh test
-./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh train-prompt data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --init-text 'No prompt recaps.' --prompt-role system --answer-kl 8 --start-weight 3 --strength .95 --output adapters/no-recaps-95
-./run.sh cache-features data/on-policy-pilot.jsonl --adapter adapters/no-recaps-95 --original-reasoning --max-tokens 16384 --output runs/on-policy-teacher.safetensors
-./run.sh train --paired data/on-policy-pilot.jsonl --teacher-features runs/on-policy-teacher.safetensors --answer-weight 1 --kl 1 --start-weight 3 --layers 8 --learning-rate .000005 --iters 400 --max-tokens 16384 --output adapters/on-policy-qv
-./run.sh cache-features data/prose-extra-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/prose-extra-teacher.safetensors
-./run.sh train --paired data/on-policy-pilot.jsonl data/prose-extra-paired.jsonl --teacher-features runs/on-policy-teacher.safetensors runs/prose-extra-teacher.safetensors --opening-only --resume adapters/on-policy-qv --answer-weight 1 --kl 2 --layers 8 --learning-rate .000005 --iters 400 --max-tokens 16384 --output adapters/opening-sft-qv
-./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-sft-qv --temperature 1 --max-tokens 4096 --output runs/opening-sft-qv-direct.jsonl
-# Export only after the generation and accuracy checks pass.
-./run.sh export --adapter adapters/opening-sft-qv --output models/flint-terse-direct-Q8_0.gguf --install
+./run.sh cache-features data/adaptive-sampled.jsonl --adapter adapters/think-tokens --original-reasoning --max-tokens 16384 --output runs/sampled-teacher-new.safetensors
+./run.sh cache-features data/adaptive-native.jsonl --original-reasoning --max-tokens 16384 --output runs/native-teacher-new.safetensors
+./run.sh train --paired data/adaptive-sampled.jsonl data/adaptive-native.jsonl \
+  --teacher-features runs/sampled-teacher-new.safetensors runs/native-teacher-new.safetensors \
+  --think-adapter adapters/think-tokens --preference-weight 1 --preference-beta .1 \
+  --answer-weight 1 --kl 2 --start-weight 3 --layers 8 \
+  --learning-rate .000005 --iters 800 --max-tokens 16384 --output adapters/correctness-new
+./run.sh batch-capture data/direct-eval.jsonl --adapter adapters/correctness-new --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/direct-new.jsonl
+./run.sh batch-capture data/retention-eval.jsonl --adapter adapters/correctness-new --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/retention-new.jsonl
 ```
 
-Choose fresh output paths when rerunning. Dependencies and model revisions are pinned. `train-prompt` and `train-head` retain the earlier embedding and output-head experiments.
+Choose fresh output paths when rerunning. `--iters 800 --accumulate 4` means 200 optimizer updates. Validation selects the saved checkpoint. The native-token stage is also runnable with `train-prompt --think-tokens`, reviewed paired inputs and their original-reasoning teacher features. `--think-adapter` freezes that saved stage; it cannot be combined with `--resume`. Earlier prefix and output-head experiments remain available through `train-prompt` and `train-head`.
+
+After reviewing ordinary replies, test accuracy with matched settings below. Only then export and load a candidate:
+
+```sh
+./run.sh export --adapter adapters/correctness-new --output models/flint-terse-direct-Q8_0.gguf --install
+lms load flint-terse-direct --identifier flint-terse --context-length 16384 --parallel 1 --gpu max --no-speculative-draft-mtp -y
+```
 
 Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. Each new GGUF needs its own LM Studio check.
 
 ## Build more corpus
 
-Most compact traces come from Flint after four short-thinking demonstrations. Selection keeps the shortest correct completion, falling back to a checked native response. The demonstrations are removed from training inputs. `pair` preserves the native final reply exactly and stores its full thinking for the probability teacher.
+Collect several attempts per training prompt. Prefer the shortest correct trace only when repeated attempts show that short reasoning is reliable; otherwise keep useful longer work. Four short-thinking demonstrations can help collect candidates and are removed from the training inputs. `pair` preserves the native final reply exactly and stores its full thinking for the probability teacher.
 
 ```sh
 ./run.sh batch-capture prompts.jsonl --samples 2 --batch-size 8 --output runs/native.jsonl
@@ -76,6 +79,15 @@ Most compact traces come from Flint after four short-thinking demonstrations. Se
 ```
 
 Records need `id`, `messages`, `split`, and a numeric, exact-text, JSON, tool-call or Python-test check. Optional `tools` retain the real schema. Review answers and reasoning before training: passing a few code tests does not prove a solution correct. `score` recomputes likelihood under an edited prefix; likelihood alone is not a correctness test.
+
+To add correctness preferences, save every attempt and attach checked mistakes to reviewed positives:
+
+```sh
+./run.sh batch-capture prompts.jsonl --adapter adapters/think-tokens --samples 8 --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/selected.jsonl --candidates-output runs/attempts.jsonl
+./run.sh build-preferences data/new-corpus.jsonl --candidates runs/attempts.jsonl --output data/new-preferences.jsonl
+```
+
+The preference builder regrades complete responses, ignores numeric formatting-only differences and retains the shortest wrong answer as the negative. It leaves the reviewed positive and its probability teacher unchanged. Keep evaluation prompts out of collection and training.
 
 `build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and [sanitized MBPP](https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json). `data/prose-prompts.jsonl` and `data/tool-prompts.jsonl` provide additional collection tasks. The original seed set alone was insufficient. More examples help only when the reasoning and replies survive review; the expanded corpus has not yet established reliable recap removal with preserved accuracy.
 
@@ -98,6 +110,6 @@ The 159-task holdout, 100-task final set and 50-task fresh set are now developme
 
 ## Research
 
-[ConPress](https://arxiv.org/abs/2602.01472), [ShorterBetter](https://arxiv.org/abs/2504.21370), [prompt tuning](https://arxiv.org/abs/2104.08691), and [Truncated-Reasoning Self-Distillation](https://arxiv.org/abs/2603.13274) informed the approach. The rejected opening-preference experiment was inspired by [DPO](https://arxiv.org/abs/2305.18290). This is a Flint-specific experiment, not a reproduction of their published results or a claim of a universally best method. The differentiable attention-sink implementation and shortest-correct sampling borrow useful ideas from `../flint-terse2`.
+[DPO](https://arxiv.org/abs/2305.18290) supplies the complete-response preference objective. [ConPress](https://arxiv.org/abs/2602.01472), [ShorterBetter](https://arxiv.org/abs/2504.21370), [prompt tuning](https://arxiv.org/abs/2104.08691), and [Truncated-Reasoning Self-Distillation](https://arxiv.org/abs/2603.13274) informed the other experiments. This combines supervised training, answer KL and correctness DPO; it does not implement GRPO or reproduce those papers' results. There is no claim of a universally best method. The differentiable attention-sink implementation and shortest-correct sampling borrow useful ideas from `../flint-terse2`.
 
 [Flint's model card](https://huggingface.co/RecursiveSI/flint) recommends temperature 1, top-p .95 and top-k 20. Our 4,096-token comparisons measure a practical local budget, below its recommendation for hard problems.
