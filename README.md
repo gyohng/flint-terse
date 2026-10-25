@@ -6,7 +6,7 @@ The older `flint-terse-prompt-half` is installed in LM Studio but unloaded. Its 
 
 ## Current result
 
-**Reliable recap removal with preserved accuracy is not solved.** `adapters/correctness-qv` fixed the direct Python request but scored only 38/50 on math/code. The next run, `adapters/correctness-base-qv`, uses the same correctness objective with Flint's original thinking-token embeddings.
+**Reliable recap removal with preserved accuracy is not solved.** With the original embeddings, `adapters/correctness-base-qv` scored 43/50 but still recapped requests. The current `adapters/compact-preference-qv` run continues that checkpoint with explicit preferences for compact over verbose thinking; it has not been evaluated or exported.
 
 These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and a 4,096-token budget:
 
@@ -16,6 +16,7 @@ These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoi
 | `on-policy-qv` attention adapter | 44/50 | 26%; still recaps |
 | `think-attention` native tokens + attention | 40/50 | 93%; loses accuracy |
 | `correctness-qv` native tokens + attention + DPO | 38/50 | 94%; loses accuracy |
+| `correctness-base-qv` original embeddings + attention + DPO | 43/50 | 23%; still recaps |
 
 Captures are in `runs/fresh-{base,on-policy-qv,think-attention,correctness-qv}.jsonl`. On ten ordinary requests, `correctness-qv` completed all ten with 61% fewer thinking tokens; longer constrained requests still produced drafting loops, and its binary-search explanation misstated which half gets discarded. It has not been exported. These are development results, not independent proof of generalization. `data/release-eval.jsonl` reserves 100 unseen math/code tasks; `data/release-chat.jsonl` adds six ordinary and multistep requests. Neither has been used yet.
 
@@ -33,6 +34,8 @@ Training uses Flint’s probabilities in three ways:
 Final replies have no shortening objective. Probability anchoring encourages a small behavioral change; it cannot guarantee unchanged accuracy or the shortest equivalent reasoning.
 
 The current corpus has **410 reviewed pairs: 365 train, 45 validation**—189 math, 147 code, 26 OpenClaw and 48 prose. Of these, 137 training and 19 validation examples include a checked incorrect response. `data/adaptive-sampled.jsonl` contains 59 reliable self-generated traces with their matching answers; `data/adaptive-native.jsonl` contains 351 reviewed native pairs. Code tests and numeric checks guide selection, followed by review. More examples alone do not establish quality.
+
+There are also 349 shorter-versus-original pairs (307 train, 42 validation). The compact preference stage uses weight `.1`, alongside correctness preference weight `1`, answer KL `2` and answer supervision `1`. Both comparisons use complete responses and a frozen reference likelihood ratio.
 
 ## Train and evaluate
 
@@ -57,6 +60,8 @@ Using the existing `adapters/think-tokens` checkpoint as the probability teacher
 ```
 
 Choose fresh output paths when rerunning. `--iters 800 --accumulate 4` means 200 optimizer updates. Validation selects the saved checkpoint. The native-token stage is also runnable with `train-prompt --think-tokens`, reviewed paired inputs and their original-reasoning teacher features. `--think-adapter` freezes that saved stage; it cannot be combined with `--resume`. Earlier prefix and output-head experiments remain available through `train-prompt` and `train-head`.
+
+To run the compact preference stage, repeat the attention-training command with `--resume adapters/correctness-new --compact-preference-weight .1` and a new `--output`. Evaluate that new adapter before export.
 
 After reviewing ordinary replies, test accuracy with matched settings below. Only then export and load a candidate:
 
