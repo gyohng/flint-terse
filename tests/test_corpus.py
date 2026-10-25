@@ -19,14 +19,14 @@ class CorpusTests(unittest.TestCase):
 {%- endif -%}"""
         messages = [{"role": "user", "content": "Old"}, {"role": "assistant", "content": "Reply"},
                     {"role": "user", "content": "New"}]
-        for role in ("user", "developer"):
+        for role in ("user", "developer", "system"):
             adapted = Environment().from_string(prefix_template(template, ["<|reserved_1|>"], role))
             prompt = adapted.render(messages=messages, add_generation_prompt=True)
             full = adapted.render(messages=messages + [{"role": "assistant", "content": "<think>notes</think>answer"}],
                                   add_generation_prompt=False)
             self.assertEqual(full, prompt + "<think>notes</think>answer")
             self.assertEqual(prompt.count("<|reserved_1|>"), 1)
-            boundary = "<|developer|>" if role == "developer" else ""
+            boundary = f"<|{role}|>" if role != "user" else ""
             self.assertEqual(prompt, "<|user|>Old<|assistant|>Reply<|user|>New" + boundary + "<|reserved_1|><|assistant|>")
 
     def test_numeric_answers_require_the_whole_answer(self):

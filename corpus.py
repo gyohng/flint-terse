@@ -35,7 +35,7 @@ def prompt_text(row, tokenizer):
 
 
 def prefix_template(template, tokens, role="user"):
-    prefix = ("<|developer|>" if role == "developer" else "") + "".join(tokens)
+    prefix = (f"<|{role}|>" if role != "user" else "") + "".join(tokens)
     for before, after in (
         ("{%- if add_generation_prompt -%}\n<|assistant|>",
          "{%- if add_generation_prompt -%}\n" + prefix + "<|assistant|>"),

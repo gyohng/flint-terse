@@ -65,9 +65,9 @@ def main():
                    help="Blend the saved prefix with its initialization (0 to 1)")
     p.add_argument("--answer-kl", type=float, default=1)
     p.add_argument("--start-weight", type=float, default=1, help="Weight the first eight reasoning tokens to teach a direct start")
-    p.add_argument("--prompt-role", choices=("developer", "user"), default="developer")
+    p.add_argument("--prompt-role", choices=("system", "developer", "user"), default="system")
     p.add_argument("--max-tokens", type=int, default=16384)
-    p.add_argument("--init-text", default="Think tersely.")
+    p.add_argument("--init-text", default="Brief thoughts. Full answers.")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
     output = Path(args.output)
@@ -93,7 +93,7 @@ def main():
     selected = reserved[-len(initial_ids):]
     token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
-    control_ids = ([tokenizer.convert_tokens_to_ids("<|developer|>")] if args.prompt_role == "developer" else []) + token_ids
+    control_ids = ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids
     records, cursor = {"train": [], "valid": []}, 0
     for row in read_rows(args.input):
         ids, offset = training_tokens(row, tokenizer)
