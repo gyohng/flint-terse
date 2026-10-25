@@ -5,7 +5,7 @@ import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from corpus import check_answer, read_rows, split_thinking
+from corpus import check_answer, parse_assistant, read_rows, split_thinking
 
 
 def add_preferences(rows, candidates):
@@ -22,14 +22,17 @@ def add_preferences(rows, candidates):
                 raise ValueError(f"{row['id']}: candidate prompt differs")
             if not candidate["complete"]:
                 continue
-            _, answer, closed = split_thinking(candidate["text"])
+            reasoning, answer, closed = split_thinking(candidate["text"])
             if closed and check_answer(row, answer, True) is False:
-                wrong.append(candidate)
+                assistant = parse_assistant(reasoning, answer, row.get("tools", []))
+                wrong.append((candidate["output_tokens"], assistant, candidate["ending"]))
         row = dict(row)
+        row.pop("rejected_assistant", None)
+        row.pop("rejected_ending", None)
         if wrong:
             # Teach against the tempting short mistake; retain useful longer working.
-            rejected = min(wrong, key=lambda r: r["output_tokens"])
-            row.update(rejected_assistant=rejected["assistant"], rejected_ending=rejected["ending"])
+            _, assistant, ending = min(wrong, key=lambda r: r[0])
+            row.update(rejected_assistant=assistant, rejected_ending=ending)
         result.append(row)
     return result
 
