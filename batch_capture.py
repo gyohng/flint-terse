@@ -105,6 +105,8 @@ def main():
                         selected = select_trace(candidates[index])
                         if args.samples > 1:
                             selected["sampled_output_tokens"] = sum(r["output_tokens"] for r in candidates[index])
+                            selected["correct_samples"] = sum(r["correct"] is True for r in candidates[index])
+                            selected["completed_samples"] = sum(r["complete"] for r in candidates[index])
                         finished[index] = selected
                         candidates[index] = []
                         completed += 1
