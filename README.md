@@ -51,13 +51,12 @@ Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified
 ./run.sh download
 ./run.sh test
 ./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh cache-features data/corpus-paired.jsonl --answer-features runs/native-features.safetensors --start-weight 3 --max-tokens 16384 --output runs/compact-features.safetensors
-./run.sh train-head runs/compact-features.safetensors --replay runs/native-features.safetensors --replay-answer-only --batch-size 256 --output adapters/terse
+./run.sh train --paired data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --layers 8 --iters 400 --accumulate 4 --learning-rate .00002 --kl 2 --start-weight 3 --max-tokens 16384 --output adapters/terse
 # Evaluate before exporting; the training command does not select a proven model.
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 ```
 
-This runs the current output-head experiment, not the earlier `prompt-half` recipe. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
+This runs the current attention QLoRA experiment, not the earlier `prompt-half` recipe. It trains 557,056 values in eight layers and selects the checkpoint with the lowest validation loss. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
 
 Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. The earlier `prompt-half` export has been loaded and exercised in normal LM Studio; each new export needs its own check.
 

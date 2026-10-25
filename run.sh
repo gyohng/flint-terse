@@ -69,8 +69,7 @@ PY
 ./run.sh setup-gguf
 ./run.sh download
 ./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh cache-features data/corpus-paired.jsonl --answer-features runs/native-features.safetensors --start-weight 3 --max-tokens 16384 --output runs/compact-features.safetensors
-./run.sh train-head runs/compact-features.safetensors --replay runs/native-features.safetensors --replay-answer-only --batch-size 256 --output adapters/terse
+./run.sh train --paired data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --layers 8 --iters 400 --accumulate 4 --learning-rate .00002 --kl 2 --start-weight 3 --max-tokens 16384 --output adapters/terse
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --adapter adapters/terse --output runs/terse.jsonl
 ./run.sh compare runs/base.jsonl runs/terse.jsonl
