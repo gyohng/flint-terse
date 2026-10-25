@@ -60,6 +60,8 @@ def main():
     )
     samplers = [request_sampler(args.seed + i, args.temperature) for i in range(len(prompts))] if args.independent_seeds else None
     uids = gen.insert(prompts, samplers=samplers)
+    # Let completed requests release their random-key graphs during large collections.
+    del samplers
     task = {uid: i // args.samples for i, uid in enumerate(uids)}
     tokens = {uid: [] for uid in uids}
     candidates = [[] for _ in rows]
