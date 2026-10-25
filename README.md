@@ -8,28 +8,24 @@ lms load flint-terse-prompt-half --identifier flint-terse --context-length 16384
 
 Use `flint-terse` as the API model name. That older GGUF includes a 17-token learned prefix in its chat template. Current prefix experiments place the instruction before the first user message; output-head experiments add no instruction.
 
-## Earlier adapter results
+## Current result
 
-These results belong to `prompt-half`, trained on the previous 378-pair corpus. They do not describe the newer adapters or establish that prompt restatement is fixed. On 100 math/code tasks kept out of its selection:
+**Reliable recap removal is not solved.** The five-token `adapters/no-recaps-95` candidate answered six ordinary requests without recapping them, using 92 thinking tokens versus 1,661 for base Flint. Its broader accuracy regressed, so it was not exported or installed.
 
-| Measure | Base Flint | Selected adapter |
+These native MLX comparisons use the same 100 math/code tasks, INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and 4,096-token budget:
+
+| Model | Correct | Thinking tokens |
 |---|---:|---:|
-| Correct answers | 89/100 | 94/100 |
-| Completed responses | 90/100 | 96/100 |
-| Thinking tokens | 89,818 | 49,069 (−45.4%) |
-| Total output tokens | 91,805 | 51,175 (−44.3%) |
-| Math correct | 51/60 | 58/60 |
-| Code correct | 38/40 | 36/40 |
+| Base Flint | 89/100 | 89,818 |
+| Earlier `prompt-half` | 94/100 | 49,069 |
+| `direct-system` | 80/100 | 16,348 |
+| `no-recaps-95` | 76/100 | 13,961 |
 
-For the 86 tasks both models answered correctly, thinking fell 41.8%. The benefit was concentrated in math: −69% thinking on shared successes; code thinking was essentially unchanged. These native MLX runs used the same INT4 base, temperature 1, top-p .95, top-k 20, independent per-task random streams, batch size 8 and a 4,096-token budget.
+The two newer candidates skipped necessary checks and made more math/code errors. The output-head candidates retained recaps; the attention QLoRA candidate also produced malformed thinking tags and incorrect code. Moving the older adapter into a system message corrected the input boundary but did not stop recaps or instruction echoing.
 
-A second run of the same 40 code tasks, with seed 142, scored 35/40 for base Flint and 34/40 for the adapter. Output tokens increased from 33,956 to 40,625. Coding compression and accuracy preservation were not reliable in these checks.
+The earlier deployed model remains experimental: a second code run scored 34/40 versus base 35/40 and used more tokens; its LM Studio OpenClaw check scored 15/24 versus 17/24. It passed six multi-turn tool episodes versus four for the original model. Those deployment comparisons also differ in quantization. None of these checks establishes that accuracy is generally preserved.
 
-In normal LM Studio, the GGUF passed all six multi-turn OpenClaw episodes versus four for the original model. The original calculator request used 168 thinking tokens versus 476 and made the correct tool call. All four ordinary-response checks completed, with full explanations, an email and a plan.
-
-The separate 24-task OpenClaw challenge scored **15/24 versus 17/24**: exact JSON formatting still regressed, alongside a list-order error and an unwanted calculator tool call. Deployment comparisons use the user's original Q4 GGUF versus an export from the INT4 MLX checkpoint, so quantization also differs. This candidate improves overall efficiency, with uneven results across tasks; it does not establish preserved coding accuracy or consistently minimal agent reasoning.
-
-Detailed captures are in `runs/final-{base-paired,prompt-half}.jsonl`, `runs/openclaw-{base-v1,prompt-half-gguf}.jsonl` and `runs/episodes-{base,prompt-half-gguf}.jsonl`.
+Captures are in `runs/final-{base-paired,prompt-half,direct-system,no-recaps-95}.jsonl` and `runs/{direct-base,no-recaps-95}-native.jsonl`. The final set has now been used for development; future selection needs fresh tasks.
 
 ## How it works
 
@@ -41,7 +37,7 @@ The current corpus has **386 pairs: 343 train, 43 validation**—190 math, 148 c
 
 `train-head` fits a low-rank output-head update without adding prompt text. It can match answer probabilities from the original full reasoning and replay original answers without reinforcing verbose thinking. `train-prompt` learns a short system prefix; `train` supports attention QLoRA. All require generation checks before deployment.
 
-## Reproduce
+## Train and evaluate
 
 Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified memory. The training checkpoint uses about 22.6 GB, the GGUF 42.6 GB, and export needs roughly 170 GB temporary free space. Unload LM Studio models before training to avoid memory pressure.
 
@@ -51,12 +47,15 @@ Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified
 ./run.sh download
 ./run.sh test
 ./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh train --paired data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --layers 8 --iters 400 --accumulate 4 --learning-rate .00002 --kl 2 --start-weight 3 --max-tokens 16384 --output adapters/terse
+./run.sh train-prompt data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --init-text 'No prompt recaps.' --prompt-role system --answer-kl 8 --start-weight 3 --strength .95 --output adapters/terse
+./run.sh capture data/direct-eval.jsonl --adapter adapters/terse --output runs/direct-check.jsonl
 # Evaluate before exporting; the training command does not select a proven model.
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 ```
 
-This runs the current attention QLoRA experiment, not the earlier `prompt-half` recipe. It trains 557,056 values in eight layers and selects the checkpoint with the lowest validation loss. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
+This reproduces the recap-removal experiment above, including its accuracy limitation; it is not a recommended deployment recipe. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
+
+For attention QLoRA with the same full-reasoning answer teacher, use `./run.sh train --paired data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --layers 8 --iters 400 --kl 2 --start-weight 3 --max-tokens 16384 --output adapters/attention`. `train-head` provides a faster cached-feature experiment. All three trainers preserve final-answer probabilities without applying a shortening loss to final replies in these modes.
 
 Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. The earlier `prompt-half` export has been loaded and exercised in normal LM Studio; each new export needs its own check.
 
@@ -75,7 +74,7 @@ Most compact traces come from Flint after four short-thinking demonstrations. Se
 
 Records need `id`, `messages`, `split`, and a numeric, exact-text, JSON, tool-call or Python-test check. Optional `tools` retain the real schema. Review answers and reasoning before training: passing a few code tests does not prove a solution correct. `score` recomputes likelihood under an edited prefix; likelihood alone is not a correctness test.
 
-`build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and [sanitized MBPP](https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json). `data/prose-prompts.jsonl` and `data/tool-prompts.jsonl` provide additional collection tasks. The original seed set alone was insufficient; the measured result above comes from the reviewed paired corpus.
+`build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and [sanitized MBPP](https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json). `data/prose-prompts.jsonl` and `data/tool-prompts.jsonl` provide additional collection tasks. The original seed set alone was insufficient. The expanded corpus also has not produced reliable recap removal with preserved accuracy.
 
 For OpenClaw tasks, run `./run.sh openclaw sync`, then `./run.sh openclaw condition data/tool-prompts.jsonl --output runs/tool-prompts.jsonl` before collecting responses.
 
