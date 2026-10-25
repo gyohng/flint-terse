@@ -44,7 +44,7 @@ class TrainingTests(unittest.TestCase):
         embedding, _ = adapt_prompt(model, [100, 101], [10, 11])
         prompt = [2, 3, 4, 5] * 10
         completion = mx.array([[6, 42, 7, 11, 1]])
-        inputs = mx.array([[9, 100, 101, 8, 6, 42, 7, 11]])
+        inputs = mx.array([[9, 100, 101, 3, 5, 8, 6, 42, 7, 11]])
         reference = nn.log_softmax(mx.random.normal((1, 2, 128)), axis=-1)
         full = mx.array([prompt + inputs[0].tolist()])
         with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
@@ -52,12 +52,12 @@ class TrainingTests(unittest.TestCase):
             cache = prefix_cache(model, prompt[20:], shared)
             self.assertEqual(shared[0].offset, 20)
             def whole(m):
-                logits = m(full)[:, len(prompt) + 3:].astype(mx.float32)
+                logits = m(full)[:, len(prompt) + 5:].astype(mx.float32)
                 ce = nn.losses.cross_entropy(logits[:, :3], completion[:, :3]).mean()
                 kl = (mx.exp(reference) * (reference - nn.log_softmax(logits[:, 3:], axis=-1))).sum(axis=-1).mean()
                 return ce + kl
             expected, gradient = nn.value_and_grad(model, whole)(model)
-            actual, cached = nn.value_and_grad(model, prompt_loss)(model, inputs, completion, cache, 3, 2, reference, 1)
+            actual, cached = nn.value_and_grad(model, prompt_loss)(model, inputs, completion, cache, 5, 2, reference, 1)
             self.assertAlmostEqual(expected.item(), actual.item(), places=5)
             self.assertEqual([k for k, _ in tree_flatten(cached)], ["model.embed_tokens.lora_b"])
             self.assertLess(mx.max(mx.abs(gradient["model"]["embed_tokens"]["lora_b"] - cached["model"]["embed_tokens"]["lora_b"])).item(), 1e-5)

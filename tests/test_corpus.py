@@ -10,7 +10,9 @@ class CorpusTests(unittest.TestCase):
         from jinja2 import Environment
 
         template = """{%- for m in messages -%}
-{%- if m.role == 'user' -%}<|user|>{{ m.content }}
+{%- if m.role == 'system' -%}<|system|>{{ m.content }}
+{%- elif m.role == 'user' -%}
+<|user|>{{ m.content }}
 {%- elif m.role == 'assistant' -%}
 <|assistant|>{{ m.content }}
 {%- endif -%}{%- endfor -%}
@@ -26,8 +28,12 @@ class CorpusTests(unittest.TestCase):
                                   add_generation_prompt=False)
             self.assertEqual(full, prompt + "<think>notes</think>answer")
             self.assertEqual(prompt.count("<|reserved_1|>"), 1)
-            boundary = f"<|{role}|>" if role != "user" else ""
-            self.assertEqual(prompt, "<|user|>Old<|assistant|>Reply<|user|>New" + boundary + "<|reserved_1|><|assistant|>")
+            if role == "system":
+                expected = "<|system|><|reserved_1|><|user|>Old<|assistant|>Reply<|user|>New<|assistant|>"
+            else:
+                boundary = f"<|{role}|>" if role != "user" else ""
+                expected = "<|user|>Old<|assistant|>Reply<|user|>New" + boundary + "<|reserved_1|><|assistant|>"
+            self.assertEqual(prompt, expected)
 
     def test_numeric_answers_require_the_whole_answer(self):
         for text, expected in [("42", True), ("42.0", True), ("41, not 42", False), ("142", False)]:

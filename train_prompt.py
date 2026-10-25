@@ -93,6 +93,7 @@ def main():
     selected = reserved[-len(initial_ids):]
     token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
+    user = tokenizer.convert_tokens_to_ids("<|user|>")
     control_ids = ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids
     records, cursor = {"train": [], "valid": []}, 0
     for row in read_rows(args.input):
@@ -110,7 +111,9 @@ def main():
         if cached_targets[cursor:cursor + len(teacher)].tolist() != teacher:
             p.error(f"{row['id']}: teacher feature order/token mismatch")
         answer_hidden = hidden[cursor + teacher_close + 1:cursor + len(teacher)]
-        records[row["split"]].append((ids[:offset - 1], completion, closing, answer_hidden, row.get("loss_weight", 1)))
+        insertion = ids.index(user) if args.prompt_role == "system" else offset - 1
+        records[row["split"]].append((ids[:insertion], ids[insertion:offset], completion, closing,
+                                      answer_hidden, row.get("loss_weight", 1)))
         cursor += len(teacher)
     if cursor != len(cached_targets) or not all(records.values()):
         p.error("Need aligned teacher features and nonempty train/validation splits")
@@ -132,16 +135,17 @@ def main():
                                                 k=args.steps * args.accumulate)
 
     def example(row, training):
-        prompt, completion, closing, answer_hidden, _ = row
+        prompt, suffix, completion, closing, answer_hidden, _ = row
         if shared_cache is not None and prompt[:len(shared_prefix)] == shared_prefix:
             cache = prefix_cache(model, prompt[len(shared_prefix):], shared_cache)
         else:
             cache = prefix_cache(model, prompt)
-        inputs = mx.array([control_ids + [assistant] + completion[:-1]])
+        inputs = mx.array([control_ids + suffix + completion[:-1]])
         reference = mx.stop_gradient(nn.log_softmax(model.lm_head(answer_hidden[None]).astype(mx.float32), axis=-1))
         mx.eval(reference)
         fn = grad_fn if training else prompt_loss
-        result = fn(model, inputs, mx.array([completion]), cache, len(control_ids), closing, reference, args.answer_kl, args.start_weight)
+        result = fn(model, inputs, mx.array([completion]), cache, len(control_ids) + len(suffix) - 1,
+                    closing, reference, args.answer_kl, args.start_weight)
         mx.eval(result)
         return result
 

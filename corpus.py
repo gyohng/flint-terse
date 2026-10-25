@@ -36,6 +36,13 @@ def prompt_text(row, tokenizer):
 
 def prefix_template(template, tokens, role="user"):
     prefix = (f"<|{role}|>" if role != "user" else "") + "".join(tokens)
+    if role == "system":
+        before = "{%- elif m.role == 'user' -%}\n<|user|>"
+        if template.count(before) != 1:
+            raise ValueError("Unexpected Flint chat template")
+        after = "{%- elif m.role == 'user' -%}\n{%- if not terse.added -%}" + prefix
+        after += "{%- set terse.added = true -%}{%- endif -%}<|user|>"
+        return "{%- set terse = namespace(added=false) -%}\n" + template.replace(before, after)
     for before, after in (
         ("{%- if add_generation_prompt -%}\n<|assistant|>",
          "{%- if add_generation_prompt -%}\n" + prefix + "<|assistant|>"),
