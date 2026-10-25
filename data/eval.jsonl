@@ -1,0 +1,12 @@
+{"id":"eval-multiply","messages":[{"role":"user","content":"What is 37 * 24? Return only the integer in your final answer."}],"expected":"888"}
+{"id":"eval-equation","messages":[{"role":"user","content":"Solve 7x - 11 = 52. Return only the value of x in your final answer."}],"expected":"9"}
+{"id":"eval-change","messages":[{"role":"user","content":"Pay 50 euros for 3 items at 7.25 euros each. Return only the change as a decimal with two digits after the point."}],"expected":"28.25"}
+{"id":"eval-logic","messages":[{"role":"user","content":"All norks are blue. Some blue things are round. Must some norks be round? Final answer: just yes or no."}],"expected":"no"}
+{"id":"eval-probability","messages":[{"role":"user","content":"A fair coin is tossed 4 times. Probability of exactly 2 heads? Final answer: reduced fraction only."}],"expected":"3/8"}
+{"id":"eval-extraneous","messages":[{"role":"user","content":"Solve sqrt(x+6)=x over the reals. Final answer: only the real solution."}],"expected":"3"}
+{"id":"eval-python","messages":[{"role":"user","content":"In Python, what is list(range(2, 11, 3))? Final answer: only the list."}],"expected":"[2, 5, 8]"}
+{"id":"eval-aliasing","messages":[{"role":"user","content":"Python: a = [[0]] * 3; a[0][0] = 9. What is a? Final answer: only the list."}],"expected":"[[9], [9], [9]]"}
+{"id":"eval-short-circuit","messages":[{"role":"user","content":"Python: x = 0; y = (x != 0) and (10 / x > 2). What is y? Final answer: only the boolean literal."}],"expected":"False"}
+{"id":"eval-median","messages":[{"role":"user","content":"Median of [8, 2, 9, 4]? Final answer: only the number."}],"expected":"6"}
+{"id":"eval-causality","messages":[{"role":"user","content":"A website slows after a DNS change. Timing alone proves causation: true or false? Final answer: only true or false."}],"expected":"false"}
+{"id":"eval-action","tools":[{"type":"function","function":{"name":"read_file","description":"Read a file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}],"messages":[{"role":"user","content":"Find the bug in /src/parser.py. You have not read the file yet."}],"expected":"<tool_call>read_file<arg_key>path</arg_key><arg_value>/src/parser.py</arg_value></tool_call>"}

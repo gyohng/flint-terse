@@ -1,0 +1,4 @@
+{"messages": [{"role": "user", "content": "What is 7*19? Return only the number."}, {"role": "assistant", "reasoning_content": "7*20-7=140-7=133.", "content": "133"}]}
+{"messages": [{"role": "user", "content": "Start with 14 apples, sell 5, buy 8. Apples now? Return only the number."}, {"role": "assistant", "reasoning_content": "14-5+8=17.", "content": "17"}]}
+{"messages": [{"role": "user", "content": "All A are B; no B are C. Can any A be C? Answer yes or no."}, {"role": "assistant", "reasoning_content": "A⊆B; B∩C=∅ ⇒ A∩C=∅.", "content": "no"}]}
+{"messages": [{"role": "user", "content": "Python function first_odd(xs): first odd integer, or None if absent. Only code."}, {"role": "assistant", "reasoning_content": "Scan left→right; x%2≠0 ⇒ return x; absent ⇒ None.", "content": "def first_odd(xs):\n    return next((x for x in xs if x % 2), None)"}]}

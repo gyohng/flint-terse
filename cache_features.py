@@ -1,0 +1,58 @@
+"""Cache frozen Flint hidden states for output-head training."""
+
+import argparse
+from pathlib import Path
+
+import mlx.core as mx
+from mlx_lm import load
+from mlx_lm.models.cache import make_prompt_cache
+
+from corpus import BASE, read_rows, training_tokens
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("input")
+    p.add_argument("--output", required=True)
+    p.add_argument("--model", default=BASE)
+    p.add_argument("--max-tokens", type=int, default=8192)
+    args = p.parse_args()
+    if Path(args.output).exists():
+        p.error(f"{args.output} exists; choose a new output")
+    rows = read_rows(args.input)
+    model, tokenizer = load(args.model)
+    model.eval()
+    close = tokenizer.convert_tokens_to_ids("</think>")
+    arrays = {k: [] for k in ("hidden", "targets", "thought_weights", "answer_weights", "weights", "valid")}
+    for i, row in enumerate(rows):
+        ids, offset = training_tokens(row, tokenizer)
+        if len(ids) > args.max_tokens:
+            raise ValueError(f"{row['id']}: exceeds --max-tokens")
+        closing = ids.index(close, offset)
+        cache = make_prompt_cache(model)
+        for start in range(0, offset - 1, 512):
+            model.model(mx.array([ids[start:min(start + 512, offset - 1)]]), cache=cache)
+            mx.eval([c.state for c in cache])
+        for start in range(offset - 1, len(ids) - 1, 256):
+            end = min(start + 256, len(ids) - 1)
+            hidden = model.model(mx.array([ids[start:end]]), cache=cache)[0]
+            answer = mx.arange(start + 1, end + 1) > closing
+            values = {
+                "hidden": hidden.astype(mx.float16), "targets": mx.array(ids[start + 1:end + 1]),
+                "thought_weights": mx.where(answer, 0, 1 / (closing - offset + 1)),
+                "answer_weights": mx.where(answer, 1 / (len(ids) - closing - 1), 0),
+                "weights": mx.full((end - start,), 1 / (len(ids) - offset)),
+                "valid": mx.full((end - start,), row["split"] == "valid"),
+            }
+            mx.eval(values)
+            for key, value in values.items():
+                arrays[key].append(value)
+        if (i + 1) % 10 == 0 or i + 1 == len(rows):
+            print(f"Features {i + 1}/{len(rows)}: {row['id']}", flush=True)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    mx.save_safetensors(args.output, {k: mx.concatenate(v) for k, v in arrays.items()}, metadata={"model": args.model})
+    print(f"Saved {args.output}")
+
+
+if __name__ == "__main__":
+    main()

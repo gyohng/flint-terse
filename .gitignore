@@ -1,0 +1,9 @@
+.venv/
+.tools/
+__pycache__/
+models/
+adapters/
+runs/
+data/prepared*/
+data/sources/
+.DS_Store
