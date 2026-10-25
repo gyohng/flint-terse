@@ -20,7 +20,7 @@ from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
 
 
-def tiny_flint():
+def tiny_flint(targets=None):
     model = Model(ModelArgs(
         model_type="flint", hidden_size=64, num_hidden_layers=2,
         intermediate_size=128, num_attention_heads=2, num_key_value_heads=1,
@@ -34,12 +34,34 @@ def tiny_flint():
     model.freeze()
     linear_to_lora_layers(model, 2, {
         "rank": 2, "scale": 2.0, "dropout": 0.0,
-        "keys": ["self_attn.q_proj", "self_attn.v_proj"],
+        "keys": targets or ["self_attn.q_proj", "self_attn.v_proj"],
     })
     return model
 
 
 class TrainingTests(unittest.TestCase):
+    def test_adding_adapter_targets_preserves_checkpoint_and_enables_mlp_gradients(self):
+        targets = ["self_attn." + p + "_proj" for p in ("q", "k", "v", "o")]
+        targets += ["mlp.shared_expert." + p + "_proj" for p in ("gate", "up", "down")]
+        mx.random.seed(17)
+        previous = tiny_flint()
+        for _, m in previous.named_modules():
+            if hasattr(m, "lora_b"):
+                m.lora_b = mx.random.normal(m.lora_b.shape) * .01
+        mx.random.seed(17)
+        expanded = tiny_flint(targets)
+        expanded.load_weights(tree_flatten(previous.trainable_parameters()), strict=False)
+        inputs = mx.array([[2, 3, 6, 12, 7, 22, 1]])
+        previous.eval()
+        expanded.eval()
+        self.assertLess(mx.max(mx.abs(previous(inputs) - expanded(inputs))).item(), 1e-5)
+        expanded.train()
+        with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
+            _, grads = nn.value_and_grad(expanded, lambda m: m(inputs).mean())(expanded)
+            mlp = [g for key, g in tree_flatten(grads) if "shared_expert" in key and key.endswith("lora_b")]
+            self.assertEqual(len(mlp), 3)
+            self.assertTrue(all(bool(mx.isfinite(g).all()) and bool((g != 0).any()) for g in mlp))
+
     def test_paired_training_saves_and_restores_only_adapter_weights(self):
         model = tiny_flint()
         ids, offset = [2, 3, 6, 12, 7, 22, 1], 2

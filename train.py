@@ -225,7 +225,7 @@ def main():
     p.add_argument("--data", default="data/prepared")
     p.add_argument("--paired", nargs="+", help="Compact thinking paired with unchanged native replies, in feature-file order")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
-    p.add_argument("--resume", help="Continue a compatible attention adapter with a fresh optimizer")
+    p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
@@ -250,8 +250,8 @@ def main():
         p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
     if args.opening_only and not args.paired:
         p.error("--opening-only requires --paired")
-    if args.paired and (args.batch_size != 1 or args.targets != ["self_attn.q_proj", "self_attn.v_proj"]):
-        p.error("Paired training uses batch size 1 and attention Q/V adapters, with a frozen answer teacher")
+    if args.paired and (args.batch_size != 1 or any(not t.startswith(("self_attn.", "mlp.")) for t in args.targets)):
+        p.error("Paired training uses batch size 1 and transformer adapters, keeping the output head frozen")
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new --output")
@@ -285,8 +285,11 @@ def main():
     linear_to_lora_layers(model, args.layers, lora)
     if args.resume:
         previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
-        if (previous["model"], previous["num_layers"], previous["lora_parameters"]) != (args.model, args.layers, lora):
-            p.error("--resume must match the model, layers, rank and adapter targets")
+        previous_lora = previous["lora_parameters"]
+        if (previous["model"] != args.model or previous["num_layers"] > args.layers
+            or not set(previous_lora["keys"]) <= set(args.targets)
+            or any(previous_lora[k] != lora[k] for k in ("rank", "scale", "dropout"))):
+            p.error("--resume must match model/rank/scale and retain every existing adapter layer and target")
         model.load_weights(str(Path(args.resume) / "adapters.safetensors"), strict=False)
     print_trainable_parameters(model)
     output.mkdir(parents=True)
