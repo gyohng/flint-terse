@@ -271,6 +271,8 @@ def generate_api(prompt, args, row, tokenizer):
         if not full.startswith(prompt):
             raise ValueError("Chat template changed the prompt boundary")
         text = full[len(prompt):]
+        if not assistant.get("reasoning_content"):
+            text = "<think></think>" + text
     else:
         text = choice["text"]
     # The completions API omits the terminating token; do not invent an observed ending.
