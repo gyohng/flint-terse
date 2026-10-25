@@ -17,7 +17,7 @@ def main():
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
     p.add_argument("--model", default=BASE)
-    p.add_argument("--adapter", help="Use a frozen learned input prefix as the probability teacher")
+    p.add_argument("--adapter", help="Use a frozen input-prefix or attention adapter as the probability teacher")
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--examples", help="Add thinking demonstrations to cache teacher features")
     p.add_argument("--weight", type=float, default=1, help="Relative loss weight per example")
@@ -46,7 +46,9 @@ def main():
         rows = [{**row, "messages": with_examples(row["messages"], examples)} for row in rows]
     if args.adapter:
         config = json.loads((Path(args.adapter) / "adapter_config.json").read_text())
-        if config.get("lora_parameters", {}).get("keys") != ["model.embed_tokens"]:
+        if config.get("lora_parameters", {}).get("keys") not in (
+            ["model.embed_tokens"], ["self_attn.q_proj", "self_attn.v_proj"],
+        ):
             p.error("Teacher adapters must leave the output head frozen")
     model, tokenizer = load(args.model, adapter_path=args.adapter)
     configure_adapter_tokenizer(tokenizer, args.adapter)
