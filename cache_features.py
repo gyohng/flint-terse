@@ -18,9 +18,12 @@ def main():
     p.add_argument("--model", default=BASE)
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--examples", help="Add thinking demonstrations to cache teacher features")
+    p.add_argument("--weight", type=float, default=1, help="Relative loss weight per example")
     args = p.parse_args()
     if Path(args.output).exists():
         p.error(f"{args.output} exists; choose a new output")
+    if args.weight <= 0:
+        p.error("Weight must be positive")
     rows = [row for path in args.input for row in read_rows(path)]
     if args.examples:
         examples = [message for row in read_rows(args.examples) for message in row["messages"]]
@@ -44,9 +47,9 @@ def main():
             answer = mx.arange(start + 1, end + 1) > closing
             values = {
                 "hidden": hidden.astype(mx.float16), "targets": mx.array(ids[start + 1:end + 1]),
-                "thought_weights": mx.where(answer, 0, 1 / (closing - offset + 1)),
-                "answer_weights": mx.where(answer, 1 / (len(ids) - closing - 1), 0),
-                "weights": mx.full((end - start,), 1 / (len(ids) - offset)),
+                "thought_weights": mx.where(answer, 0, args.weight / (closing - offset + 1)),
+                "answer_weights": mx.where(answer, args.weight / (len(ids) - closing - 1), 0),
+                "weights": mx.full((end - start,), args.weight / (len(ids) - offset)),
                 "valid": mx.full((end - start,), row["split"] == "valid"),
             }
             mx.eval(values)
@@ -56,7 +59,7 @@ def main():
             print(f"Features {i + 1}/{len(rows)}: {row['id']}", flush=True)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     mx.save_safetensors(args.output, {k: mx.concatenate(v) for k, v in arrays.items()},
-                        metadata={"model": args.model, "examples": args.examples or ""})
+                        metadata={"model": args.model, "examples": args.examples or "", "weight": str(args.weight)})
     print(f"Saved {args.output}")
 
 
