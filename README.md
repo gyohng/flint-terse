@@ -23,6 +23,8 @@ On 100 math/code tasks kept out of adapter selection:
 
 For the 86 tasks both models answered correctly, thinking fell 41.8%. The benefit was concentrated in math: −69% thinking on shared successes; code thinking was essentially unchanged. These native MLX runs used the same INT4 base, temperature 1, top-p .95, top-k 20, independent per-task random streams, batch size 8 and a 4,096-token budget.
 
+A second run of the same 40 code tasks, with seed 142, scored 35/40 for base Flint and 34/40 for the adapter. Output tokens increased from 33,956 to 40,625. Coding compression and accuracy preservation were not reliable in these checks.
+
 In normal LM Studio, the GGUF passed all six multi-turn OpenClaw episodes versus four for the original model. The original calculator request used 168 thinking tokens versus 476 and made the correct tool call. All four ordinary-response checks completed, with full explanations, an email and a plan.
 
 The separate 24-task OpenClaw challenge scored **15/24 versus 17/24**: exact JSON formatting still regressed, alongside a list-order error and an unwanted calculator tool call. Deployment comparisons use the user's original Q4 GGUF versus an export from the INT4 MLX checkpoint, so quantization also differs. This candidate improves overall efficiency, with uneven results across tasks; it does not establish preserved coding accuracy or consistently minimal agent reasoning.
@@ -71,6 +73,8 @@ Most compact traces come from Flint after four short-thinking demonstrations. Se
 Records need `id`, `messages`, `split`, and a numeric, exact-text, JSON, tool-call or Python-test check. Optional `tools` retain the real schema. Review answers and reasoning before training: passing a few code tests does not prove a solution correct. `score` recomputes likelihood under an edited prefix; likelihood alone is not a correctness test.
 
 `build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and [sanitized MBPP](https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json). `data/prose-prompts.jsonl` and `data/tool-prompts.jsonl` provide additional collection tasks. The original seed set alone was insufficient; the measured result above comes from the reviewed paired corpus.
+
+For OpenClaw tasks, run `./run.sh openclaw sync`, then `./run.sh openclaw condition data/tool-prompts.jsonl --output runs/tool-prompts.jsonl` before collecting responses.
 
 ## Evaluate
 
