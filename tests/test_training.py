@@ -13,7 +13,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 
 from corpus import chat_messages, check_answer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import loss_masks, make_loss, training_attention
+from train import loss_masks, make_loss, reasoning_loss, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -39,6 +39,19 @@ def tiny_flint():
 
 
 class TrainingTests(unittest.TestCase):
+    def test_compact_thinking_loss_preserves_answers_by_probability(self):
+        for closing in (1, 4):
+            with self.subTest(closing=closing):
+                logits = mx.random.normal((1, closing + 3, 16))
+                targets = mx.arange(closing + 3)[None]
+                reference = nn.log_softmax(logits[:, closing + 1:], axis=-1)
+                value = reasoning_loss(logits, targets, closing, reference, 2, 3)
+                changed = mx.concatenate((targets[:, :closing + 1], mx.full((1, 2), 15)), axis=1)
+                self.assertEqual(value.item(), reasoning_loss(logits, changed, closing, reference, 2, 3).item())
+                gradient = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2, 3))(logits)
+                self.assertLess(mx.max(mx.abs(gradient[:, closing + 1:])).item(), 1e-6)
+                self.assertGreater(mx.max(mx.abs(gradient[:, :closing + 1])).item(), 0)
+
     def test_reserved_prompt_gradients_and_fusion_leave_other_rows_unchanged(self):
         model = tiny_flint()
         embedding, _ = adapt_prompt(model, [100, 101], [10, 11])

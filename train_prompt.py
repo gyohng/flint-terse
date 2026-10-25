@@ -16,7 +16,7 @@ from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.tuner.lora import LoRAEmbedding
 
 from corpus import BASE, read_rows, training_tokens
-from train import training_attention
+from train import reasoning_loss, training_attention
 
 
 def adapt_prompt(model, token_ids, initial_ids):
@@ -42,13 +42,7 @@ def prefix_cache(model, prompt, cache=None):
 def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1):
     hidden = model.model(inputs, cache=copy.deepcopy(cache))[:, prefix_length:]
     logits = model.lm_head(hidden).astype(mx.float32)
-    losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
-    positions = mx.arange(closing + 1)
-    weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
-    thought = (losses * weights).sum() / weights.sum()
-    answer = nn.log_softmax(logits[:, closing + 1:], axis=-1)
-    preservation = (mx.exp(reference) * (reference - answer)).sum(axis=-1).mean()
-    return thought + answer_kl * preservation
+    return reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight)
 
 
 def main():

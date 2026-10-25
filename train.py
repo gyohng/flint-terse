@@ -2,18 +2,20 @@
 
 import argparse
 import json
+import random
+import time
 from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
 import numpy as np
-from mlx.utils import tree_flatten
+from mlx.utils import tree_flatten, tree_map
 from mlx_lm import load
-from mlx_lm.tuner.trainer import TrainingArgs, iterate_batches, train
+from mlx_lm.tuner.trainer import TrainingArgs, grad_checkpoint, iterate_batches, train
 from mlx_lm.tuner.utils import linear_to_lora_layers, print_trainable_parameters
 
-from corpus import BASE, read_rows
+from corpus import BASE, read_rows, training_tokens
 
 
 def training_attention(queries, keys, values, cache, scale, mask, sinks=None):
@@ -122,10 +124,96 @@ def relative_weight_change(model):
     return (delta_squared / base_squared) ** 0.5
 
 
+def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1):
+    losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
+    positions = mx.arange(closing + 1)
+    weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
+    thought = (losses * weights).sum() / weights.sum()
+    answer = nn.log_softmax(logits[:, closing + 1:], axis=-1)
+    preservation = (mx.exp(reference) * (reference - answer)).sum(axis=-1).mean()
+    return thought + answer_kl * preservation
+
+
+def train_paired(model, tokenizer, args):
+    parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
+    if any(meta["model"] != args.model for _, meta in parts):
+        raise ValueError("Teacher features must use the same frozen model")
+    teacher = {k: mx.concatenate([part[k] for part, _ in parts]) for k in ("hidden", "targets")}
+    del parts
+    records, cursor = {"train": [], "valid": []}, 0
+    close = tokenizer.convert_tokens_to_ids("</think>")
+    for row in read_rows(args.paired):
+        ids, offset = training_tokens(row, tokenizer)
+        original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
+        original_ids, original_offset = training_tokens(original, tokenizer)
+        completion, native = ids[offset:], original_ids[original_offset:]
+        closing, native_close = completion.index(close), native.index(close)
+        if len(ids) > args.max_tokens or ids[:offset] != original_ids[:original_offset]:
+            raise ValueError(f"{row['id']}: invalid context or mismatched teacher prompt")
+        if completion[closing + 1:] != native[native_close + 1:]:
+            raise ValueError(f"{row['id']}: final reply changed")
+        if teacher["targets"][cursor:cursor + len(native)].tolist() != native:
+            raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
+        hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
+        records[row["split"]].append((ids, offset, closing, hidden, row.get("loss_weight", 1)))
+        cursor += len(native)
+    if cursor != len(teacher["targets"]) or not all(records.values()):
+        raise ValueError("Need aligned teacher features and nonempty train/validation splits")
+    del teacher
+    grad_checkpoint(model.layers[0])
+
+    def loss(model, ids, offset, closing, reference):
+        hidden = model.model(mx.array([ids[:-1]]))[:, offset - 1:]
+        logits = model.lm_head(hidden).astype(mx.float32)
+        return reasoning_loss(logits, mx.array([ids[offset:]]), closing, reference, args.kl, args.start_weight)
+
+    gradient = nn.value_and_grad(model, loss)
+    optimizer = optim.Adam(learning_rate=args.learning_rate)
+    schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]], k=args.iters)
+
+    def example(row, training):
+        ids, offset, closing, hidden, _ = row
+        reference = nn.log_softmax(model.lm_head(hidden[None]).astype(mx.float32), axis=-1)
+        mx.eval(reference)
+        result = (gradient if training else loss)(model, ids, offset, closing, reference)
+        mx.eval(result)
+        return result
+
+    best, best_weights, best_step = float("inf"), None, 0
+    started = time.monotonic()
+    steps = args.iters // args.accumulate
+    for step in range(steps + 1):
+        if step % 25 == 0 or step == steps:
+            model.eval()
+            validation = sum(example(row, False).item() * row[-1] for row in records["valid"]) / sum(r[-1] for r in records["valid"])
+            print(f"Update {step}: validation={validation:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
+            if validation < best:
+                best, best_step = validation, step
+                best_weights = dict(tree_flatten(model.trainable_parameters()))
+        if step == steps:
+            break
+        model.train()
+        accumulated, total = None, 0
+        for row in schedule[step * args.accumulate:(step + 1) * args.accumulate]:
+            value, grad = example(row, True)
+            total += value.item()
+            accumulated = grad if accumulated is None else tree_map(lambda a, b: a + b, accumulated, grad)
+        optimizer.update(model, tree_map(lambda g: g / args.accumulate, accumulated))
+        mx.eval(model.trainable_parameters(), optimizer.state)
+        if (step + 1) % 5 == 0:
+            print(f"Update {step + 1}: loss={total / args.accumulate:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
+    model.load_weights(list(best_weights.items()))
+    mx.save_safetensors(str(Path(args.output) / "adapters.safetensors"), best_weights)
+    print(f"Selected update {best_step}", flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default=BASE)
     p.add_argument("--data", default="data/prepared")
+    p.add_argument("--paired", help="Compact thinking paired with unchanged native replies")
+    p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
+    p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--output", default="adapters/terse")
     p.add_argument("--iters", type=int, default=100)
     p.add_argument("--rank", type=int, default=8)
@@ -143,11 +231,15 @@ def main():
         p.error("--iters must be positive and divisible by --accumulate")
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
+    if args.start_weight <= 0 or bool(args.paired) != bool(args.teacher_features):
+        p.error("Start weight must be positive; --paired requires --teacher-features")
+    if args.paired and (args.batch_size != 1 or args.targets != ["self_attn.q_proj", "self_attn.v_proj"]):
+        p.error("Paired training uses batch size 1 and attention Q/V adapters, with a frozen answer teacher")
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new --output")
     datasets = []
-    for split in ("train", "valid"):
+    for split in (() if args.paired else ("train", "valid")):
         rows = read_rows(Path(args.data) / f"{split}.jsonl")
         if len(rows) < args.batch_size:
             p.error(f"{split}: fewer examples than batch size")
@@ -188,12 +280,15 @@ def main():
         steps_per_report=10, steps_per_eval=max(args.accumulate, args.iters // 2),
         steps_per_save=args.iters + 1, adapter_file=output / "adapters.safetensors",
     )
-    train(
-        model, optim.Adam(learning_rate=args.learning_rate),
-        train_dataset=datasets[0], val_dataset=datasets[1], args=training_args,
-        loss=make_loss(model, tokenizer.convert_tokens_to_ids("</think>"), args.kl, args.kl_scope),
-        iterate_batches=completion_batches,
-    )
+    if args.paired:
+        train_paired(model, tokenizer, args)
+    else:
+        train(
+            model, optim.Adam(learning_rate=args.learning_rate),
+            train_dataset=datasets[0], val_dataset=datasets[1], args=training_args,
+            loss=make_loss(model, tokenizer.convert_tokens_to_ids("</think>"), args.kl, args.kl_scope),
+            iterate_batches=completion_batches,
+        )
     weights = dict(tree_flatten(model.trainable_parameters()))
     if not all(bool(mx.isfinite(w).all()) for w in weights.values()):
         raise RuntimeError("Non-finite adapter weights; do not export this run")
