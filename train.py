@@ -132,38 +132,30 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
     return answer_kl * preservation + answer_weight * answer_ce
 
 
-def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0):
-    losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
-    positions = mx.arange(closing + 1)
-    weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
-    thought = (losses * weights).sum() / weights.sum()
+def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False):
+    if opening_only:
+        count = max(1, min(16, closing - 1))
+        # Include <think>; fixed normalization avoids over-weighting empty thoughts.
+        thought = nn.losses.cross_entropy(logits[:, :count + 1], targets[:, :count + 1]).sum() / 17
+    else:
+        losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
+        positions = mx.arange(closing + 1)
+        weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
+        thought = (losses * weights).sum() / weights.sum()
     return thought + answer_loss(logits, targets, closing, reference, answer_kl, answer_weight)
-
-
-def opening_preference(chosen, chosen_targets, rejected, rejected_targets, reference_chosen, reference_rejected):
-    # A fixed denominator keeps one-token empty thoughts from dominating other openings.
-    chosen_logp = -nn.losses.cross_entropy(chosen, chosen_targets).sum() / 16
-    rejected_logp = -nn.losses.cross_entropy(rejected, rejected_targets).sum() / 16
-    margin = (chosen_logp - reference_chosen) - (rejected_logp - reference_rejected)
-    # The likelihood term prevents improving the margin by merely degrading both openings.
-    return -chosen_logp + mx.logaddexp(mx.array(0.0), -margin)
 
 
 def train_paired(model, tokenizer, args):
     parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
-    if args.opening_preferences and any(meta.get("adapter", "") != (args.resume or "") for _, meta in parts):
-        raise ValueError("Opening preferences require features from the starting adapter on the chosen responses")
     teacher = {k: mx.concatenate([part[k] for part, _ in parts]) for k in ("hidden", "targets")}
     del parts
     records, cursor = {"train": [], "valid": []}, 0
     close = tokenizer.convert_tokens_to_ids("</think>")
-    rejected = {r["id"]: r for r in read_rows(args.opening_preferences)} if args.opening_preferences else {}
-    model.eval()
-    for i, row in enumerate(read_rows(args.paired)):
+    for row in read_rows(args.paired):
         ids, offset = training_tokens(row, tokenizer)
-        original = row if args.opening_preferences else {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
+        original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         original_ids, original_offset = training_tokens(original, tokenizer)
         completion, native = ids[offset:], original_ids[original_offset:]
         closing, native_close = completion.index(close), native.index(close)
@@ -174,58 +166,28 @@ def train_paired(model, tokenizer, args):
         if teacher["targets"][cursor:cursor + len(native)].tolist() != native:
             raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
         hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
-        preference = None
-        if args.opening_preferences and row.get("prefer_opening", True):
-            other = rejected[row["id"]]
-            other = {**other, "assistant": {**other["assistant"], "reasoning_content": other["teacher_reasoning"]}}
-            other_ids, other_offset = training_tokens(other, tokenizer)
-            if ids[:offset] != other_ids[:other_offset]:
-                raise ValueError(f"{row['id']}: preference prompts differ")
-            count = max(1, min(16, closing - 1))
-            other_count = max(1, min(16, other_ids.index(close, other_offset) - other_offset - 1))
-            negative = other_ids[other_offset + 1:other_offset + 1 + other_count]
-            if completion[1:1 + count] != negative:
-                positive_hidden = teacher["hidden"][cursor + 1:cursor + 1 + count]
-                positive_logits = model.lm_head(positive_hidden[None]).astype(mx.float32)
-                positive_logp = -nn.losses.cross_entropy(positive_logits, mx.array([completion[1:1 + count]])).sum().item() / 16
-                negative_input = ids[:offset + 1] + negative[:-1]
-                negative_hidden = model.model(mx.array([negative_input]))[:, offset:]
-                negative_logits = model.lm_head(negative_hidden).astype(mx.float32)
-                negative_logp = -nn.losses.cross_entropy(negative_logits, mx.array([negative])).sum().item() / 16
-                preference = (count, negative_input, negative, positive_logp, negative_logp)
-            if (i + 1) % 10 == 0:
-                print(f"Frozen opening references: {i + 1}", flush=True)
-        records[row["split"]].append((ids, offset, closing, hidden, preference, row.get("loss_weight", 1)))
+        records[row["split"]].append((ids, offset, closing, hidden, row.get("loss_weight", 1)))
         cursor += len(native)
     if cursor != len(teacher["targets"]) or not all(records.values()):
         raise ValueError("Need aligned teacher features and nonempty train/validation splits")
     del teacher
     grad_checkpoint(model.layers[0])
 
-    def loss(model, ids, offset, closing, reference, preference):
+    def loss(model, ids, offset, closing, reference):
         hidden = model.model(mx.array([ids[:-1]]))[:, offset - 1:]
         logits = model.lm_head(hidden).astype(mx.float32)
-        targets = mx.array([ids[offset:]])
-        if not args.opening_preferences:
-            return reasoning_loss(logits, targets, closing, reference, args.kl, args.start_weight, args.answer_weight)
-        result = answer_loss(logits, targets, closing, reference, args.kl, args.answer_weight)
-        if preference is not None:
-            count, negative_input, negative, positive_logp, negative_logp = preference
-            negative_hidden = model.model(mx.array([negative_input]))[:, offset:]
-            negative_logits = model.lm_head(negative_hidden).astype(mx.float32)
-            result += opening_preference(logits[:, 1:1 + count], targets[:, 1:1 + count],
-                                          negative_logits, mx.array([negative]), positive_logp, negative_logp)
-        return result
+        return reasoning_loss(logits, mx.array([ids[offset:]]), closing, reference,
+                              args.kl, args.start_weight, args.answer_weight, args.opening_only)
 
     gradient = nn.value_and_grad(model, loss)
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]], k=args.iters)
 
     def example(row, training):
-        ids, offset, closing, hidden, preference, _ = row
+        ids, offset, closing, hidden, _ = row
         reference = nn.log_softmax(model.lm_head(hidden[None]).astype(mx.float32), axis=-1)
         mx.eval(reference)
-        result = (gradient if training else loss)(model, ids, offset, closing, reference, preference)
+        result = (gradient if training else loss)(model, ids, offset, closing, reference)
         mx.eval(result)
         return result
 
@@ -264,7 +226,7 @@ def main():
     p.add_argument("--paired", help="Compact thinking paired with unchanged native replies")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
     p.add_argument("--resume", help="Continue a compatible attention adapter with a fresh optimizer")
-    p.add_argument("--opening-preferences", help="Paired corpus whose teacher_reasoning supplies rejected openings; reference features must use chosen responses")
+    p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
     p.add_argument("--output", default="adapters/terse")
@@ -286,8 +248,8 @@ def main():
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):
         p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
-    if args.opening_preferences and not args.paired:
-        p.error("--opening-preferences requires --paired")
+    if args.opening_only and not args.paired:
+        p.error("--opening-only requires --paired")
     if args.paired and (args.batch_size != 1 or args.targets != ["self_attn.q_proj", "self_attn.v_proj"]):
         p.error("Paired training uses batch size 1 and attention Q/V adapters, with a frozen answer teacher")
     output = Path(args.output)

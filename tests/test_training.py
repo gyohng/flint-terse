@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 
 from corpus import chat_messages, check_answer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import loss_masks, make_loss, opening_preference, reasoning_loss, train_paired, training_attention
+from train import loss_masks, make_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -52,7 +52,7 @@ class TrainingTests(unittest.TestCase):
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=corpus,
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
-                opening_preferences=None, resume=None, output=folder)
+                opening_only=True, resume=None, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
             with patch("train.training_tokens", return_value=(ids, offset)), patch("train.grad_checkpoint"), \
                  patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
@@ -63,45 +63,18 @@ class TrainingTests(unittest.TestCase):
             for key in saved:
                 self.assertTrue(bool((saved[key] == current[key]).all()))
 
-            # References use the chosen response; only the rejected opening differs.
-            rows = [{**r, "assistant": {"reasoning_content": "chosen"}} for r in rows]
-            corpus.write_text("\n".join(json.dumps(r) for r in rows))
-            args.opening_preferences = corpus
-            calls = []
-            def tokens(row, _):
-                result = ids.copy()
-                if row["assistant"].get("reasoning_content") == "native":
-                    result[3] = 13
-                return result, offset
-            from train import opening_preference as preference
-            def checked_preference(chosen, chosen_targets, rejected, rejected_targets, ref_chosen, ref_rejected):
-                self.assertEqual(chosen_targets.tolist(), [[12]])
-                self.assertEqual(rejected_targets.tolist(), [[13]])
-                self.assertIsInstance(ref_chosen, float)
-                self.assertIsInstance(ref_rejected, float)
-                calls.append((ref_chosen, ref_rejected))
-                return preference(chosen, chosen_targets, rejected, rejected_targets, ref_chosen, ref_rejected)
-            with patch("train.training_tokens", side_effect=tokens), patch("train.grad_checkpoint"), \
-                 patch("train.opening_preference", side_effect=checked_preference), \
-                 patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
-                train_paired(model, tokenizer, args)
-            self.assertGreater(len(calls), 2)
-            self.assertEqual(len(set(calls)), 1)
-
-    def test_opening_preference_rewards_chosen_and_discourages_rejected(self):
-        logits = mx.zeros((1, 2, 8))
-        targets = mx.array([[1, 2]])
-        reference = -nn.losses.cross_entropy(logits, targets).sum().item() / 16
-        loss = lambda chosen, rejected: opening_preference(chosen, targets, rejected, targets, reference, reference)
-        self.assertAlmostEqual(loss(logits, logits).item(), -reference + 0.69314718, places=6)
-        chosen_grad, rejected_grad = mx.grad(loss, argnums=(0, 1))(logits, logits)
-        self.assertLess(chosen_grad[0, 0, 1].item(), 0)
-        self.assertGreater(rejected_grad[0, 0, 1].item(), 0)
-        self.assertGreater(abs(chosen_grad[0, 0, 1].item()), abs(rejected_grad[0, 0, 1].item()))
-        self.assertLess(loss(logits - chosen_grad, logits - rejected_grad).item(), loss(logits, logits).item())
-        short_grad = mx.grad(lambda x: opening_preference(x, targets[:, :1], logits, targets,
-                              reference / 2, reference))(logits[:, :1])
-        self.assertAlmostEqual(short_grad[0, 0, 1].item(), chosen_grad[0, 0, 1].item(), places=6)
+    def test_opening_supervision_leaves_later_reasoning_free(self):
+        gradients = []
+        for closing in (1, 20):
+            logits = mx.zeros((1, closing + 3, 32))
+            targets = mx.zeros((1, closing + 3), dtype=mx.int32)
+            reference = nn.log_softmax(logits[:, closing + 1:], axis=-1)
+            grad = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2, opening_only=True))(logits)
+            gradients.append(grad[0, 1, 0].item())
+            self.assertLess(grad[0, 1, 0].item(), 0)
+            if closing > 16:
+                self.assertLess(mx.max(mx.abs(grad[:, 17:])).item(), 1e-6)
+        self.assertAlmostEqual(*gradients, places=6)
 
     def test_compact_thinking_loss_preserves_answers_by_probability(self):
         for closing in (1, 4):
