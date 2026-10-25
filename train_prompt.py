@@ -1,4 +1,4 @@
-"""Learn reserved input-token embeddings; preserve replies with full-reasoning teacher probabilities."""
+"""Learn a short input prefix or native thinking-token embeddings; preserve answer probabilities."""
 
 import argparse
 import copy
@@ -47,7 +47,7 @@ def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("input")
+    p.add_argument("input", nargs="+")
     p.add_argument("--teacher-features", nargs="+", required=True, help="Original-reasoning features in corpus order")
     p.add_argument("--model", default=BASE)
     p.add_argument("--output", default="adapters/prompt")
@@ -65,6 +65,7 @@ def main():
     p.add_argument("--prompt-role", choices=("system", "developer", "user"), default="system")
     p.add_argument("--max-tokens", type=int, default=16384)
     p.add_argument("--init-text", default="Brief thoughts. Full answers.")
+    p.add_argument("--think-tokens", action="store_true", help="Tune existing <think> and </think> embeddings without adding prompt text")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
     output = Path(args.output)
@@ -83,32 +84,40 @@ def main():
     model, tokenizer = load(args.model)
     if model.model_type != "flint" or model.args.tie_word_embeddings:
         p.error("This recipe requires Flint's separate input embedding and output head")
-    initial_ids = tokenizer.encode(args.init_text, add_special_tokens=False)
-    reserved = sorted((i, t) for t, i in tokenizer.get_added_vocab().items() if t.startswith("<|reserved_"))
-    if not 0 < len(initial_ids) <= len(reserved):
-        p.error("Initialization must fit in the available reserved tokens")
-    selected = reserved[-len(initial_ids):]
-    token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
+    if args.think_tokens:
+        token_names = ["<think>", "</think>"]
+        token_ids = initial_ids = [tokenizer.convert_tokens_to_ids(t) for t in token_names]
+        args.init_text = args.prompt_role = None
+    else:
+        initial_ids = tokenizer.encode(args.init_text, add_special_tokens=False)
+        reserved = sorted((i, t) for t, i in tokenizer.get_added_vocab().items() if t.startswith("<|reserved_"))
+        if not 0 < len(initial_ids) <= len(reserved):
+            p.error("Initialization must fit in the available reserved tokens")
+        selected = reserved[-len(initial_ids):]
+        token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
     resumed = None
     if args.resume:
         previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
-        expected = {"model": args.model, "prompt_role": args.prompt_role,
-                    "init_text": args.init_text, "prompt_tokens": token_names}
+        expected = {"model": args.model, "think_tokens": True} if args.think_tokens else {
+            "model": args.model, "prompt_role": args.prompt_role,
+            "init_text": args.init_text, "prompt_tokens": token_names}
         if any(previous.get(k) != v for k, v in expected.items()):
             p.error("Resumed prefix must use the same model, role, initialization and reserved tokens")
         resumed = mx.load(str(Path(args.resume) / "adapters.safetensors"))
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
     user = tokenizer.convert_tokens_to_ids("<|user|>")
-    control_ids = ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids
+    control_ids = [] if args.think_tokens else (
+        ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids)
     records, cursor = {"train": [], "valid": []}, 0
-    for row in read_rows(args.input):
+    for row in (r for path in args.input for r in read_rows(path)):
         ids, offset = training_tokens(row, tokenizer)
         original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         teacher_ids, teacher_offset = training_tokens(original, tokenizer)
         completion, teacher = ids[offset:], teacher_ids[teacher_offset:]
         closing, teacher_close = completion.index(close), teacher.index(close)
-        if ids[offset - 1] != assistant or completion[0] != opening or set(token_ids) & set(ids):
-            p.error(f"{row['id']}: unexpected prompt or reserved token collision")
+        cached_ids = ids[:offset] if args.think_tokens else ids
+        if ids[offset - 1] != assistant or completion[0] != opening or set(token_ids) & set(cached_ids):
+            p.error(f"{row['id']}: unexpected prompt or tuned token inside frozen context")
         if len(ids) + len(control_ids) > args.max_tokens or ids[:offset] != teacher_ids[:teacher_offset]:
             p.error(f"{row['id']}: invalid context or mismatched teacher prompt")
         if completion[closing + 1:] != teacher[teacher_close + 1:]:
@@ -180,14 +189,16 @@ def main():
         if (step + 1) % 5 == 0:
             print(f"Update {step + 1}: loss={total / args.accumulate:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
     output.mkdir(parents=True)
-    config = {**vars(args), "fine_tune_type": "lora", "num_layers": 1, "prompt_tokens": token_names,
+    config = {**vars(args), "fine_tune_type": "lora", "num_layers": 1,
+              "prompt_tokens": [] if args.think_tokens else token_names,
               "lora_parameters": {"rank": len(token_ids), "scale": 1.0, "dropout": 0.0, "keys": ["model.embed_tokens"]}}
     (output / "adapter_config.json").write_text(json.dumps(config, indent=2) + "\n")
     mx.save_safetensors(str(output / "adapters.safetensors"), {
         "model.embed_tokens.lora_a": embedding.lora_a,
         "model.embed_tokens.lora_b": initial_b + args.prompt_strength * (best_b - initial_b),
     })
-    print(f"Saved step {best_step} to {output}; {len(token_ids)} input tokens, strength={args.prompt_strength}; evaluate before exporting")
+    kind = "native thinking tokens" if args.think_tokens else "prefix tokens"
+    print(f"Saved step {best_step} to {output}; {len(token_ids)} {kind}, strength={args.prompt_strength}; evaluate before exporting")
 
 
 if __name__ == "__main__":
