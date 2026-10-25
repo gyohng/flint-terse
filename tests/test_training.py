@@ -14,10 +14,8 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 from corpus import chat_messages, check_answer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
 from train import loss_masks, make_loss, training_attention
-from stop_head import save_adapter, stop_loss
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
-from train_token import adapt_embedding, prefix_cache, token_loss
 
 
 def tiny_flint():
@@ -40,32 +38,6 @@ def tiny_flint():
 
 
 class TrainingTests(unittest.TestCase):
-    def test_think_embedding_cache_preserves_gradients_and_other_rows(self):
-        model = tiny_flint()
-        embedding = adapt_embedding(model, 6)
-        embedding.lora_b = mx.random.normal(embedding.lora_b.shape) * .01
-        prompt = [2, 3, 4, 5] * 10
-        completion = mx.array([[6, 42, 7, 11, 1]])
-        tokens = mx.array([prompt + completion[0].tolist()])
-        with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
-            cache = prefix_cache(model, prompt)
-            reference = mx.stop_gradient(nn.log_softmax(model(tokens[:, :-1])[:, len(prompt):], axis=-1))
-            def whole(m):
-                logits = m(tokens[:, :-1])[:, len(prompt):].astype(mx.float32)
-                ce = nn.losses.cross_entropy(logits, completion[:, 1:])
-                kl = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
-                return (ce[:, :2] + .1 * kl[:, :2]).mean() + kl[:, 2:].mean()
-            expected, gradient = nn.value_and_grad(model, whole)(model)
-            actual, cached_gradient = nn.value_and_grad(model, token_loss)(model, completion, cache, 2, reference, .1, 1)
-            self.assertAlmostEqual(expected.item(), actual.item(), places=5)
-            self.assertEqual([k for k, _ in tree_flatten(cached_gradient)], ["model.embed_tokens.lora_b"])
-            self.assertLess(mx.max(mx.abs(gradient["model"]["embed_tokens"]["lora_b"] - cached_gradient["model"]["embed_tokens"]["lora_b"])).item(), 1e-5)
-        original = embedding.embedding(mx.arange(128))
-        fused = embedding.fuse(dequantize=True)
-        unchanged = mx.array([i for i in range(128) if i != 6])
-        self.assertTrue(bool((fused.weight[unchanged] == original[unchanged]).all()))
-        self.assertLess(mx.max(mx.abs(fused(mx.arange(128)) - embedding(mx.arange(128)))).item(), 1e-6)
-
     def test_head_training_matches_inference_and_keeps_base_frozen(self):
         from mlx_lm.tuner.lora import LoRALinear
 
@@ -108,39 +80,6 @@ class TrainingTests(unittest.TestCase):
             for _ in range(3):
                 other(logits).item()
             self.assertEqual(expected, second(logits).item())
-
-    def test_stop_row_loss_and_adapter_preserve_other_logits(self):
-        mx.random.seed(18)
-        hidden, head = mx.random.normal((10, 8)), mx.random.normal((17, 8))
-        delta, targets = mx.random.normal((8,)) * .1, mx.array([0, 3, 8, 3, 11, 2, 1, 3, 2, 16])
-        original = hidden @ head.T
-        odds = original[:, 3] - mx.logsumexp(mx.concatenate((original[:, :3], original[:, 4:]), axis=-1), axis=-1)
-        selector = (mx.arange(17) == 3).astype(mx.float32)
-
-        def full_loss(delta):
-            changed = original + (hidden @ delta)[:, None] * selector
-            logp = original - mx.logsumexp(original, axis=-1, keepdims=True)
-            logq = changed - mx.logsumexp(changed, axis=-1, keepdims=True)
-            kl = (mx.exp(logp) * (logp - logq)).sum(axis=-1).mean()
-            return nn.losses.cross_entropy(changed, targets).mean() + .7 * kl
-
-        binary = lambda d: stop_loss(d, hidden, odds, targets == 3, mx.ones((10,)), .7)
-        self.assertAlmostEqual((full_loss(delta) - full_loss(mx.zeros_like(delta))).item(),
-                               (binary(delta) - binary(mx.zeros_like(delta))).item(), places=5)
-        self.assertLess(mx.max(mx.abs(mx.grad(full_loss)(delta) - mx.grad(binary)(delta))).item(), 1e-6)
-        with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / "adapter"
-            save_adapter(output, delta, {"model": "tiny", "close": "3", "vocab_size": "17"})
-            from mlx_lm.tuner.lora import LoRALinear
-            base = nn.Linear(8, 17, bias=False)
-            base.weight = head
-            adapter = LoRALinear.from_base(base, r=1, scale=1, dropout=0)
-            weights = mx.load(str(output / "adapters.safetensors"))
-            adapter.lora_a, adapter.lora_b = weights["lm_head.lora_a"], weights["lm_head.lora_b"]
-            fused = adapter.fuse(dequantize=True)
-            self.assertLess(mx.max(mx.abs(adapter(hidden) - fused(hidden))).item(), 1e-5)
-            unchanged = mx.array([i for i in range(17) if i != 3])
-            self.assertTrue(bool((fused.weight[unchanged] == head[unchanged]).all()))
 
     def test_completion_projection_preserves_loss_and_gradients(self):
         model = tiny_flint()

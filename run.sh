@@ -29,26 +29,23 @@ PY
   prepare|capture|rewrite|compare|score)
     .venv/bin/python corpus.py "$@"
     ;;
-  train|stop-head|train-head|train-token|cache-features)
+  train|train-head|cache-features)
     command="$1"
     shift
     case "$command" in
       train) script=train.py ;;
-      stop-head) script=stop_head.py ;;
       train-head) script=train_head.py ;;
-      train-token) script=train_token.py ;;
       cache-features) script=cache_features.py ;;
     esac
     .venv/bin/python "$script" "$@"
     ;;
-  build-corpus|select-corpus|batch-capture|shorten-native|distill|replay)
+  build-corpus|select-corpus|batch-capture|distill|replay)
     command="$1"
     shift
     case "$command" in
       build-corpus) script=make_corpus.py ;;
       select-corpus) script=select_corpus.py ;;
       batch-capture) script=batch_capture.py ;;
-      shorten-native) script=shorten_native.py ;;
       distill) script=distill.py ;;
       replay) script=replay.py ;;
     esac

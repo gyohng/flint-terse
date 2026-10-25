@@ -36,7 +36,7 @@ The source math and code tasks come from [GSM8K](https://github.com/openai/grade
 
 ## Training and comparison
 
-The scripts expose experimental methods through `--help`: `train` for attention QLoRA, `train-head` for an output-head adapter, and `train-token` for the existing `<think>` embedding. All retain the frozen base checkpoint. The current experiments are not validated recipes.
+The scripts expose experimental methods through `--help`: `train` for attention QLoRA and `train-head` for an output-head adapter. Both retain the frozen base checkpoint. The current experiments are not validated recipes. Rejected early-stop and token-embedding experiments remain in Git history.
 
 Use identical prompts, sampling settings and budgets for paired evaluation. Independent per-task random streams prevent one short completion from changing every later task's random draws.
 
