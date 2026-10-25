@@ -1,16 +1,16 @@
 # flint-terse
 
-Compress Flint's `<think>` into working notes and equations while keeping final replies fluent and complete. The selected adapter is `adapters/prompt-half`; its merged GGUF is `models/flint-terse-prompt-half-Q8_0.gguf`, already imported into LM Studio.
+Compress Flint's `<think>` into working notes and equations while keeping final replies fluent and complete. The earlier adapter `adapters/prompt-half` is installed in LM Studio as `flint-terse-prompt-half`. It still restates requests and can quote its learned instruction as user text. It is an experimental baseline, not a finished solution to that behavior.
 
 ```sh
 lms load flint-terse-prompt-half --identifier flint-terse --context-length 16384 --parallel 1 --gpu max --no-speculative-draft-mtp -y
 ```
 
-Use `flint-terse` as the API model name. The learned prefix is included in the GGUF's chat template; no extra user prompt is needed.
+Use `flint-terse` as the API model name. That older GGUF includes a 17-token learned prefix in its chat template. Current prefix experiments place the instruction before the first user message; output-head experiments add no instruction.
 
-## Results
+## Earlier adapter results
 
-On 100 math/code tasks kept out of adapter selection:
+These results belong to `prompt-half`, trained on the previous 378-pair corpus. They do not describe the newer adapters or establish that prompt restatement is fixed. On 100 math/code tasks kept out of its selection:
 
 | Measure | Base Flint | Selected adapter |
 |---|---:|---:|
@@ -33,11 +33,13 @@ Detailed captures are in `runs/final-{base-paired,prompt-half}.jsonl`, `runs/ope
 
 ## How it works
 
-The adapter learns **34,816 values in 17 existing reserved-token embeddings**. Ordinary embeddings, the transformer and the output head stay frozen. The chat template inserts those 17 input tokens before the current assistant turn. Standard MLX LoRA loading and fusion handle the embedding adapter.
+The earlier adapter learns **34,816 values in 17 existing reserved-token embeddings**. Ordinary embeddings, the transformer and the output head stay frozen. The chat template inserts those 17 input tokens before the current assistant turn. Standard MLX LoRA loading and fusion handle the embedding adapter.
 
 The corpus pairs compact, checked Flint-generated thinking with its original final replies. Training combines cross-entropy on compact thinking with KL divergence on final-answer probabilities: the student after short thinking should predict like frozen Flint after its original full thinking. Final replies receive no shortening objective. This uses Flint's own probabilities; it is not a guarantee of the globally shortest equivalent reasoning.
 
-The selected corpus has **378 pairs: 335 train, 43 validation**—190 math, 148 code, 26 with the real OpenClaw context, and 14 reviewed ordinary explanations, emails, plans and creative responses. Ordinary prose receives eight times the sampling weight. Attention QLoRA and output-head experiments remain available through `train` and `train-head`; the learned prefix performed best in the combined development checks.
+The current corpus has **386 pairs: 343 train, 43 validation**—190 math, 148 code, 26 with the real OpenClaw context, and 22 ordinary requests. Thinking targets start with useful deductions, not task recitals; trivial greetings and a joke use empty thinking. Original final replies are preserved. Ordinary requests receive eight times the loss weight. This is a small development corpus, not evidence of broad reliability.
+
+`train-head` fits a low-rank output-head update without adding prompt text. It can match answer probabilities from the original full reasoning and replay original answers without reinforcing verbose thinking. `train-prompt` learns a short system prefix; `train` supports attention QLoRA. All require generation checks before deployment.
 
 ## Reproduce
 
@@ -49,13 +51,15 @@ Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified
 ./run.sh download
 ./run.sh test
 ./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh train-prompt data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --strength .5 --output adapters/terse
+./run.sh cache-features data/corpus-paired.jsonl --answer-features runs/native-features.safetensors --start-weight 3 --max-tokens 16384 --output runs/compact-features.safetensors
+./run.sh train-head runs/compact-features.safetensors --replay runs/native-features.safetensors --replay-answer-only --batch-size 256 --output adapters/terse
+# Evaluate before exporting; the training command does not select a proven model.
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 ```
 
-Training defaults reproduce the selected recipe: 100 updates, accumulation 4, learning rate .001, answer KL weight 1 and seed 42. `--strength .5` blends the learned prefix halfway toward its initialization. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
+This runs the current output-head experiment, not the earlier `prompt-half` recipe. Choose new output paths when rerunning. Dependencies and model revisions are pinned.
 
-Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. The changed embedding matrix stays FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. The exported file has been loaded and exercised in normal LM Studio.
+Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. The earlier `prompt-half` export has been loaded and exercised in normal LM Studio; each new export needs its own check.
 
 ## Build more corpus
 
