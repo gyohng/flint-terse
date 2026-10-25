@@ -153,7 +153,7 @@ def train_paired(model, tokenizer, args):
     del parts
     records, cursor = {"train": [], "valid": []}, 0
     close = tokenizer.convert_tokens_to_ids("</think>")
-    for row in read_rows(args.paired):
+    for row in (r for path in args.paired for r in read_rows(path)):
         ids, offset = training_tokens(row, tokenizer)
         original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         original_ids, original_offset = training_tokens(original, tokenizer)
@@ -223,7 +223,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default=BASE)
     p.add_argument("--data", default="data/prepared")
-    p.add_argument("--paired", help="Compact thinking paired with unchanged native replies")
+    p.add_argument("--paired", nargs="+", help="Compact thinking paired with unchanged native replies, in feature-file order")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
     p.add_argument("--resume", help="Continue a compatible attention adapter with a fresh optimizer")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")

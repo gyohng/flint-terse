@@ -50,7 +50,7 @@ class TrainingTests(unittest.TestCase):
             mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(ids[offset:])}, metadata={"model": "tiny"})
             rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
-            args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=corpus,
+            args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=[corpus],
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
                 opening_only=True, resume=None, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
