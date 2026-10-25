@@ -1,0 +1,8 @@
+{"id": "direct-js", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Can you show a small JavaScript example?"}]}
+{"id": "direct-bash", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Make me a Bash script."}]}
+{"id": "direct-sql", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Help me with a SQL query."}]}
+{"id": "direct-thanks", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Draft a quick thank-you email."}]}
+{"id": "direct-exercise", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Give me a beginner coding exercise."}]}
+{"id": "direct-automate", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Help me automate a boring task."}]}
+{"id": "direct-joke", "family": "prose", "split": "train", "loss_weight": 8, "messages": [{"role": "user", "content": "Tell me a lighthearted joke."}]}
+{"id": "direct-recipe", "family": "prose", "split": "valid", "loss_weight": 8, "messages": [{"role": "user", "content": "Suggest something easy to cook for lunch."}]}

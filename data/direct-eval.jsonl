@@ -1,0 +1,6 @@
+{"id": "direct-eval-python", "messages": [{"role": "user", "content": "write some python code"}]}
+{"id": "direct-eval-hello", "messages": [{"role": "user", "content": "Hi!"}]}
+{"id": "direct-eval-poem", "messages": [{"role": "user", "content": "Write a short poem about autumn."}]}
+{"id": "direct-eval-lists", "messages": [{"role": "user", "content": "Explain Python lists."}]}
+{"id": "direct-eval-email", "messages": [{"role": "user", "content": "Write a polite email declining an invitation."}]}
+{"id": "direct-eval-code", "messages": [{"role": "user", "content": "Write a Python function that removes duplicates from a list while preserving order."}]}
