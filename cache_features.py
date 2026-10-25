@@ -1,4 +1,4 @@
-"""Cache frozen Flint hidden states for output-head training."""
+"""Cache frozen Flint hidden states for probability-preserving training."""
 
 import argparse
 from pathlib import Path
