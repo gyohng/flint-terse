@@ -225,17 +225,25 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
         hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
         cached = frozen_hidden(model, ids, first_layer)
-        preference = None
+        rejected_responses = []
         if args.preference_weight and row.get("rejected_assistant"):
             rejected = {**row, "assistant": row["rejected_assistant"], "ending": row["rejected_ending"]}
             rejected_ids, rejected_offset = training_tokens(rejected, tokenizer, require_approved=False)
             if (len(rejected_ids) > args.max_tokens or rejected_offset != offset
                 or rejected_ids[:offset] != ids[:offset]):
                 raise ValueError(f"{row['id']}: invalid rejected response or mismatched prompt")
-            rejected_cached = frozen_hidden(model, rejected_ids, first_layer)
+            rejected_responses.append((rejected_ids, args.preference_weight))
+        if args.compact_preference_weight and len(ids) < len(original_ids):
+            if len(original_ids) > args.max_tokens:
+                raise ValueError(f"{row['id']}: original reasoning exceeds --max-tokens")
+            rejected_responses.append((original_ids, args.compact_preference_weight))
+        preference = []
+        if rejected_responses:
             chosen_logp = completion_logp(model, ids, offset, cached, first_layer).item()
+        for rejected_ids, weight in rejected_responses:
+            rejected_cached = frozen_hidden(model, rejected_ids, first_layer)
             rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer).item()
-            preference = (rejected_ids, rejected_cached, chosen_logp - rejected_logp)
+            preference.append((rejected_ids, rejected_cached, chosen_logp - rejected_logp, weight))
             preferences += 1
             if preferences % 25 == 0:
                 print(f"Cached {preferences} frozen preference ratios", flush=True)
@@ -245,8 +253,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             print(f"Cached {sum(map(len, records.values()))} training/validation responses", flush=True)
     if cursor != len(teacher["targets"]) or not all(records.values()):
         raise ValueError("Need aligned teacher features and nonempty train/validation splits")
-    if args.preference_weight and not any(row[-2] is not None for row in records["train"]):
-        raise ValueError("Preference training needs labeled rejected responses")
+    if (args.preference_weight or args.compact_preference_weight) and not any(row[-2] for row in records["train"]):
+        raise ValueError("Preference training needs incorrect responses or shorter reviewed reasoning")
     del teacher
     grad_checkpoint(model.layers[0])
 
@@ -256,11 +264,10 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
                                 args.kl, args.start_weight, args.answer_weight, args.opening_only)
-        if preference is not None:
-            rejected_ids, rejected_cached, reference_ratio = preference
-            chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum")
+        chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum") if preference else None
+        for rejected_ids, rejected_cached, reference_ratio, weight in preference:
             rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer)
-            result += args.preference_weight * preference_loss(chosen_logp, rejected_logp, reference_ratio, args.preference_beta)
+            result += weight * preference_loss(chosen_logp, rejected_logp, reference_ratio, args.preference_beta)
         return result
 
     gradient = nn.value_and_grad(model, loss)
@@ -315,6 +322,8 @@ def main():
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
     p.add_argument("--preference-weight", type=float, default=0, help="Paired mode: add DPO loss against labeled incorrect responses")
+    p.add_argument("--compact-preference-weight", type=float, default=0,
+                   help="Paired mode: prefer reviewed shorter thinking over the original thinking, with identical final replies")
     p.add_argument("--preference-beta", type=float, default=.1)
     p.add_argument("--output", default="adapters/terse")
     p.add_argument("--iters", type=int, default=100)
@@ -335,7 +344,8 @@ def main():
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):
         p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
-    if args.preference_weight < 0 or args.preference_beta <= 0 or (args.preference_weight and not args.paired):
+    if (min(args.preference_weight, args.compact_preference_weight) < 0 or args.preference_beta <= 0
+        or ((args.preference_weight or args.compact_preference_weight) and not args.paired)):
         p.error("Preference weight must be nonnegative, beta positive, and preferences require paired training")
     if args.opening_only and not args.paired:
         p.error("--opening-only requires --paired")

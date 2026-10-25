@@ -28,6 +28,7 @@ Training uses Flint’s probabilities in three ways:
 - Supervised loss teaches reviewed working notes. Some difficult examples retain longer reasoning.
 - KL divergence anchors final-answer probabilities to a frozen teacher conditioned on the original thinking. Verified answers also receive supervised loss, with extra weight on their opening to preserve language and format.
 - DPO prefers a correct complete response over Flint's own checked mistake, relative to the frozen starting model's likelihood ratio. It uses the entire response, including thinking.
+- `--compact-preference-weight` optionally adds a second DPO comparison: reviewed compact thinking versus the original verbose thinking, with identical final replies. This teaches brevity directly; it is separate from the correctness comparison.
 
 Final replies have no shortening objective. Probability anchoring encourages a small behavioral change; it cannot guarantee unchanged accuracy or the shortest equivalent reasoning.
 
