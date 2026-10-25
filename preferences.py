@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -23,7 +24,14 @@ def add_preferences(rows, candidates):
             if not candidate["complete"]:
                 continue
             reasoning, answer, closed = split_thinking(candidate["text"])
-            if closed and check_answer(row, answer, True) is False:
+            if not closed or not answer.strip():
+                continue
+            if "expected_number" in row:
+                numbers = re.findall(r"[+-]?\d+(?:\.\d+)?(?:/[+-]?\d+)?", answer.replace(",", ""))
+                if len(numbers) == 1 and check_answer(row, numbers[0], True):
+                    # SFT handles formatting; don't label a correct calculation wrong for '$'.
+                    continue
+            if check_answer(row, answer, True) is False:
                 assistant = parse_assistant(reasoning, answer, row.get("tools", []))
                 wrong.append((candidate["output_tokens"], assistant, candidate["ending"]))
         row = dict(row)

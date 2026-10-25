@@ -248,7 +248,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     started = time.monotonic()
     steps = args.iters // args.accumulate
     for step in range(steps + 1):
-        if step % 25 == 0 or step == steps:
+        if step % max(25, steps // 4) == 0 or step == steps:
             model.eval()
             validation = sum(example(row, False).item() * row[-1] for row in records["valid"]) / sum(r[-1] for r in records["valid"])
             print(f"Update {step}: validation={validation:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)

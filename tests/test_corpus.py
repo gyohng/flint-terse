@@ -19,6 +19,9 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(paired["rejected_assistant"]["content"], "41")
         self.assertEqual(paired["assistant"], row["assistant"])
         self.assertNotIn("rejected_assistant", row)
+        formatted = {**candidates[0], "text": "<think>notes</think>$42"}
+        empty = {**candidates[0], "text": "<think>notes</think>"}
+        self.assertNotIn("rejected_assistant", add_preferences([row], [formatted, empty])[0])
         with self.assertRaises(ValueError):
             add_preferences([{**row, "messages": []}], candidates)
 
