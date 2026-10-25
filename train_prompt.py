@@ -71,7 +71,7 @@ def main():
     if output.exists():
         p.error(f"{output} exists; choose a new output")
     if min(args.steps, args.accumulate, args.learning_rate, args.max_change, args.start_weight) <= 0 or min(args.answer_kl, args.answer_weight) < 0:
-        p.error("Steps, accumulation, learning rate and max change must be positive; KL nonnegative")
+        p.error("Steps, accumulation, learning rate, max change and start weight must be positive; answer weights nonnegative")
     if not 0 <= args.prompt_strength <= 1:
         p.error("Strength must be between 0 and 1")
     features = [mx.load(path, return_metadata=True) for path in args.teacher_features]

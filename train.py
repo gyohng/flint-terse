@@ -216,7 +216,7 @@ def main():
     p.add_argument("--paired", help="Compact thinking paired with unchanged native replies")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
     p.add_argument("--start-weight", type=float, default=1)
-    p.add_argument("--answer-weight", type=float, default=0, help="Supervise verified final replies without rewarding their terminator")
+    p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
     p.add_argument("--output", default="adapters/terse")
     p.add_argument("--iters", type=int, default=100)
     p.add_argument("--rank", type=int, default=8)
@@ -235,7 +235,7 @@ def main():
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):
-        p.error("Start weight must be positive; --paired requires --teacher-features")
+        p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
     if args.paired and (args.batch_size != 1 or args.targets != ["self_attn.q_proj", "self_attn.v_proj"]):
         p.error("Paired training uses batch size 1 and attention Q/V adapters, with a frozen answer teacher")
     output = Path(args.output)

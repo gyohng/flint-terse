@@ -77,6 +77,9 @@ class TrainingTests(unittest.TestCase):
                 gradient = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2, 3))(logits)
                 self.assertLess(mx.max(mx.abs(gradient[:, closing + 1:])).item(), 1e-6)
                 self.assertGreater(mx.max(mx.abs(gradient[:, :closing + 1])).item(), 0)
+                gradient = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2, 3, 1))(logits)
+                self.assertLess(mx.max(mx.abs(gradient[:, -1])).item(), 1e-6)
+                self.assertGreater(mx.max(mx.abs(gradient[:, closing + 1])).item(), 0)
 
     def test_reserved_prompt_gradients_and_fusion_leave_other_rows_unchanged(self):
         model = tiny_flint()
