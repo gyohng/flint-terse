@@ -51,7 +51,7 @@ class TrainingTests(unittest.TestCase):
             rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=corpus,
-                max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, output=folder)
+                max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
             with patch("train.training_tokens", return_value=(ids, offset)), patch("train.grad_checkpoint"), \
                  patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
@@ -72,7 +72,7 @@ class TrainingTests(unittest.TestCase):
                 changed = mx.concatenate((targets[:, :closing + 1], mx.full((1, 2), 15)), axis=1)
                 self.assertEqual(value.item(), reasoning_loss(logits, changed, closing, reference, 2, 3).item())
                 supervised = reasoning_loss(logits, targets, closing, reference, 2, 3, 1)
-                expected = nn.losses.cross_entropy(logits[:, closing + 1:], targets[:, closing + 1:]).mean()
+                expected = nn.losses.cross_entropy(logits[:, closing + 1:-1], targets[:, closing + 1:-1]).mean()
                 self.assertAlmostEqual((supervised - value).item(), expected.item(), places=5)
                 gradient = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2, 3))(logits)
                 self.assertLess(mx.max(mx.abs(gradient[:, closing + 1:])).item(), 1e-6)
