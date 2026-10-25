@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import freeze_thinking_embedding, loss_masks, make_loss, reasoning_loss, train_paired, training_attention
+from train import completion_logp, freeze_thinking_embedding, loss_masks, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -40,6 +40,18 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_correctness_preferences_are_centered_on_the_starting_policy(self):
+        chosen, rejected = mx.array(-20.0), mx.array(-5.0)
+        reference = -15.0
+        initial = preference_loss(chosen, rejected, reference, .1).item()
+        self.assertAlmostEqual(initial, .69314718, places=6)
+        self.assertLess(preference_loss(chosen + 1, rejected, reference, .1).item(), initial)
+        self.assertLess(preference_loss(chosen, rejected - 1, reference, .1).item(), initial)
+        grad_chosen = mx.grad(lambda x: preference_loss(x, rejected, reference, .1))(chosen)
+        grad_rejected = mx.grad(lambda x: preference_loss(chosen, x, reference, .1))(rejected)
+        self.assertLess(grad_chosen.item(), 0)
+        self.assertGreater(grad_rejected.item(), 0)
+
     def test_fixed_thinking_tokens_survive_attention_checkpoint_roundtrip(self):
         mx.random.seed(31)
         original = tiny_flint()
@@ -95,18 +107,22 @@ class TrainingTests(unittest.TestCase):
     def test_paired_training_saves_and_restores_only_adapter_weights(self):
         model = tiny_flint()
         ids, offset = [2, 3, 6, 12, 7, 22, 1], 2
+        rejected_ids = [2, 3, 6, 13, 7, 23, 1]
+        initial_ratio = (completion_logp(model, ids, offset) - completion_logp(model, rejected_ids, offset)).item()
         hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             features, corpus = folder / "features.safetensors", folder / "corpus.jsonl"
             mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(ids[offset:])}, metadata={"model": "tiny"})
             rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
+            rows[0].update(rejected_assistant={"content": "wrong"}, rejected_ending="<|user|>")
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=[corpus],
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
-                opening_only=True, resume=None, output=folder)
+                opening_only=True, resume=None, preference_weight=1, preference_beta=.1, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
-            with patch("train.training_tokens", return_value=(ids, offset)), patch("train.grad_checkpoint"), \
+            tokens = lambda row, *a, **kw: (rejected_ids if row["assistant"].get("content") == "wrong" else ids, offset)
+            with patch("train.training_tokens", side_effect=tokens), patch("train.grad_checkpoint"), \
                  patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
                 train_paired(model, tokenizer, args)
             saved = mx.load(str(folder / "adapters.safetensors"))
@@ -114,6 +130,8 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(saved.keys(), current.keys())
             for key in saved:
                 self.assertTrue(bool((saved[key] == current[key]).all()))
+            final_ratio = (completion_logp(model, ids, offset) - completion_logp(model, rejected_ids, offset)).item()
+            self.assertGreater(final_ratio, initial_ratio)
 
     def test_opening_supervision_leaves_later_reasoning_free(self):
         gradients = []

@@ -31,6 +31,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("input")
     p.add_argument("--output", required=True)
+    p.add_argument("--candidates-output", help="Keep every attempt for correctness preference pairs")
     p.add_argument("--model", default=BASE)
     p.add_argument("--adapter")
     p.add_argument("--batch-size", type=int, default=4)
@@ -65,6 +66,11 @@ def main():
     finished, cursor, completed = {}, 0, 0
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    raw = None
+    if args.candidates_output:
+        path = Path(args.candidates_output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = path.open("x")
     try:
         with output.open("x") as f, gen.stats() as stats:
             while responses := gen.next_generated():
@@ -99,6 +105,9 @@ def main():
                         result["ending"] = tokenizer.decode([response.token])
                     if args.independent_seeds:
                         result["independent_seeds"] = True
+                    if raw:
+                        raw.write(json.dumps(result, ensure_ascii=False) + "\n")
+                        raw.flush()
                     candidates[index].append(result)
                     del tokens[uid]
                     if len(candidates[index]) == args.samples:
@@ -120,6 +129,8 @@ def main():
         print(f"Generation: {stats.generation_tps:.1f} tokens/s; peak memory {stats.peak_memory:.2f} GB")
     finally:
         gen.close()
+        if raw:
+            raw.close()
     report("capture", read_rows(output))
 
 
