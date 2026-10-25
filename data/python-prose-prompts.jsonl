@@ -1,0 +1,5 @@
+{"id": "python-prose-0", "family": "prose", "split": "train", "loss_weight": 2, "messages": [{"role": "user", "content": "Write a small Python program."}]}
+{"id": "python-prose-1", "family": "prose", "split": "train", "loss_weight": 2, "messages": [{"role": "user", "content": "Show me a beginner-friendly Python script with an explanation."}]}
+{"id": "python-prose-2", "family": "prose", "split": "train", "loss_weight": 2, "messages": [{"role": "user", "content": "Give me a useful Python example."}]}
+{"id": "python-prose-3", "family": "prose", "split": "train", "loss_weight": 2, "messages": [{"role": "user", "content": "Can you demonstrate a simple Python class?"}]}
+{"id": "python-prose-4", "family": "prose", "split": "train", "loss_weight": 2, "messages": [{"role": "user", "content": "Show a Python function that formats someone’s name, with examples."}]}
