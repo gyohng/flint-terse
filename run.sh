@@ -68,18 +68,20 @@ PY
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
-./run.sh prepare data/seed.jsonl
-./run.sh capture data/eval.jsonl --output runs/base.jsonl
-./run.sh train --iters 100
-./run.sh capture data/eval.jsonl --adapter adapters/terse --output runs/terse.jsonl
+./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
+./run.sh train-prompt data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --strength .5 --output adapters/terse
+./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
+./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --adapter adapters/terse --output runs/terse.jsonl
 ./run.sh compare runs/base.jsonl runs/terse.jsonl
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 
 Corpus building:
-./run.sh capture prompts.jsonl --output runs/raw.jsonl
-./run.sh rewrite runs/raw.jsonl --output runs/edited.jsonl
-# Review edited traces, set approved=true, then prepare them.
-./run.sh prepare runs/edited.jsonl
+./run.sh batch-capture prompts.jsonl --samples 2 --output runs/raw.jsonl
+./run.sh distill build prompts.jsonl --output runs/teacher-prompts.jsonl
+./run.sh batch-capture runs/teacher-prompts.jsonl --samples 2 --output runs/teacher.jsonl
+./run.sh distill select runs/teacher.jsonl --baseline runs/raw.jsonl --output runs/compact.jsonl
+# Review both native and compact traces; mark accepted native rows approved=true.
+./run.sh distill pair runs/compact.jsonl --baseline runs/raw.jsonl --output data/new-corpus.jsonl
 
 OpenClaw conditioning and regression tasks:
 ./run.sh openclaw sync
