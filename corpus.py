@@ -69,9 +69,9 @@ def training_tokens(row, tokenizer, require_approved=True):
     if require_approved and row.get("approved") is not True:
         raise ValueError(f"{row['id']}: approve the trace after checking correctness")
     assistant = row["assistant"]
-    reasoning = assistant.get("reasoning_content", "")
-    if not reasoning or "<think>" in reasoning or "</think>" in reasoning:
-        raise ValueError(f"{row['id']}: reasoning_content must be plain, nonempty text")
+    reasoning = assistant.get("reasoning_content")
+    if not isinstance(reasoning, str) or "<think>" in reasoning or "</think>" in reasoning:
+        raise ValueError(f"{row['id']}: reasoning_content must be plain text")
     if not assistant.get("content") and not assistant.get("tool_calls"):
         raise ValueError(f"{row['id']}: missing answer or tool call")
     prompt = prompt_text(row, tokenizer)
@@ -79,6 +79,9 @@ def training_tokens(row, tokenizer, require_approved=True):
         row["messages"] + [{"role": "assistant", **assistant}],
         tools=row.get("tools"), add_generation_prompt=False, tokenize=False,
     )
+    if reasoning == "":
+        # Flint's template omits empty thinking; retain an explicit empty section.
+        full = full[:len(prompt)] + "<think></think>" + full[len(prompt):]
     # Flint's template emits no end-of-turn token. A tool call yields to observation.
     ending = row.get("ending", "<|observation|>" if assistant.get("tool_calls") else "<|user|>")
     if ending not in ("<|observation|>", "<|user|>", "<|end_of_text|>", "<|developer|>"):

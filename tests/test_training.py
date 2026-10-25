@@ -262,6 +262,7 @@ class TrainingTests(unittest.TestCase):
     def test_incomplete_and_wrong_answers_never_pass(self):
         for text, complete, expected in [
             ("<think>work</think>42", True, True),
+            ("<think></think>42", True, True),
             ("<think>work", False, False),
             ("<think>work</think>142", True, False),
             ("<think>work</think>more work</think>42", True, False),
