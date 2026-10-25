@@ -39,10 +39,13 @@ def prefix_cache(model, prompt, cache=None):
     return cache
 
 
-def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl):
+def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1):
     hidden = model.model(inputs, cache=copy.deepcopy(cache))[:, prefix_length:]
     logits = model.lm_head(hidden).astype(mx.float32)
-    thought = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1]).mean()
+    losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
+    positions = mx.arange(closing + 1)
+    weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
+    thought = (losses * weights).sum() / weights.sum()
     answer = nn.log_softmax(logits[:, closing + 1:], axis=-1)
     preservation = (mx.exp(reference) * (reference - answer)).sum(axis=-1).mean()
     return thought + answer_kl * preservation
@@ -61,14 +64,16 @@ def main():
     p.add_argument("--strength", dest="prompt_strength", type=float, default=1,
                    help="Blend the saved prefix with its initialization (0 to 1)")
     p.add_argument("--answer-kl", type=float, default=1)
+    p.add_argument("--start-weight", type=float, default=1, help="Weight the first eight reasoning tokens to teach a direct start")
+    p.add_argument("--prompt-role", choices=("developer", "user"), default="developer")
     p.add_argument("--max-tokens", type=int, default=16384)
-    p.add_argument("--init-text", default="Think in brief working notes and equations. Preserve necessary checks. Answer the user normally.")
+    p.add_argument("--init-text", default="Think tersely.")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new output")
-    if min(args.steps, args.accumulate, args.learning_rate, args.max_change) <= 0 or args.answer_kl < 0:
+    if min(args.steps, args.accumulate, args.learning_rate, args.max_change, args.start_weight) <= 0 or args.answer_kl < 0:
         p.error("Steps, accumulation, learning rate and max change must be positive; KL nonnegative")
     if not 0 <= args.prompt_strength <= 1:
         p.error("Strength must be between 0 and 1")
@@ -88,6 +93,7 @@ def main():
     selected = reserved[-len(initial_ids):]
     token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
+    control_ids = ([tokenizer.convert_tokens_to_ids("<|developer|>")] if args.prompt_role == "developer" else []) + token_ids
     records, cursor = {"train": [], "valid": []}, 0
     for row in read_rows(args.input):
         ids, offset = training_tokens(row, tokenizer)
@@ -97,7 +103,7 @@ def main():
         closing, teacher_close = completion.index(close), teacher.index(close)
         if ids[offset - 1] != assistant or completion[0] != opening or set(token_ids) & set(ids):
             p.error(f"{row['id']}: unexpected prompt or reserved token collision")
-        if len(ids) + len(token_ids) > args.max_tokens or ids[:offset] != teacher_ids[:teacher_offset]:
+        if len(ids) + len(control_ids) > args.max_tokens or ids[:offset] != teacher_ids[:teacher_offset]:
             p.error(f"{row['id']}: invalid context or mismatched teacher prompt")
         if completion[closing + 1:] != teacher[teacher_close + 1:]:
             p.error(f"{row['id']}: final reply changed")
@@ -131,11 +137,11 @@ def main():
             cache = prefix_cache(model, prompt[len(shared_prefix):], shared_cache)
         else:
             cache = prefix_cache(model, prompt)
-        inputs = mx.array([token_ids + [assistant] + completion[:-1]])
+        inputs = mx.array([control_ids + [assistant] + completion[:-1]])
         reference = mx.stop_gradient(nn.log_softmax(model.lm_head(answer_hidden[None]).astype(mx.float32), axis=-1))
         mx.eval(reference)
         fn = grad_fn if training else prompt_loss
-        result = fn(model, inputs, mx.array([completion]), cache, len(token_ids), closing, reference, args.answer_kl)
+        result = fn(model, inputs, mx.array([completion]), cache, len(control_ids), closing, reference, args.answer_kl, args.start_weight)
         mx.eval(result)
         return result
 

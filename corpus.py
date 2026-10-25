@@ -34,8 +34,8 @@ def prompt_text(row, tokenizer):
     )
 
 
-def prefix_template(template, tokens):
-    prefix = "".join(tokens)
+def prefix_template(template, tokens, role="user"):
+    prefix = ("<|developer|>" if role == "developer" else "") + "".join(tokens)
     for before, after in (
         ("{%- if add_generation_prompt -%}\n<|assistant|>",
          "{%- if add_generation_prompt -%}\n" + prefix + "<|assistant|>"),
@@ -53,7 +53,7 @@ def configure_adapter_tokenizer(tokenizer, adapter):
     if adapter:
         config = json.loads((Path(adapter) / "adapter_config.json").read_text())
         if tokens := config.get("prompt_tokens"):
-            tokenizer.chat_template = prefix_template(tokenizer.chat_template, tokens)
+            tokenizer.chat_template = prefix_template(tokenizer.chat_template, tokens, config.get("prompt_role", "user"))
             return tokenizer.chat_template
 
 
