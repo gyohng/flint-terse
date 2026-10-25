@@ -111,7 +111,7 @@ def completion_batches(*args, **kwargs):
 def relative_weight_change(model):
     delta_squared = base_squared = 0.0
     for _, module in model.named_modules():
-        if not hasattr(module, "lora_a"):
+        if not hasattr(module, "lora_a") or not hasattr(module, "linear"):
             continue
         base = module.linear
         weight = base.weight
@@ -122,6 +122,19 @@ def relative_weight_change(model):
         delta_squared += mx.square(delta.astype(mx.float32)).sum().item()
         base_squared += mx.square(weight.astype(mx.float32)).sum().item()
     return (delta_squared / base_squared) ** 0.5
+
+
+def freeze_thinking_embedding(embedding, weights, scale):
+    """Carry a native-token adapter into a larger-rank attention checkpoint."""
+    prefix = "model.embed_tokens."
+    a, b = (weights[prefix + key] for key in ("lora_a", "lora_b"))
+    padding = embedding.lora_a.shape[1] - a.shape[1]
+    if padding < 0:
+        raise ValueError("Attention rank must be at least the thinking adapter rank")
+    embedding.lora_a = mx.pad(a, [(0, 0), (0, padding)])
+    embedding.lora_b = mx.pad(b, [(0, padding), (0, 0)]) * (scale / embedding.scale)
+    embedding.freeze()
+    return {prefix + key: getattr(embedding, key) for key in ("lora_a", "lora_b")}
 
 
 def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
@@ -150,7 +163,7 @@ def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=
     return thought + answer_loss(logits, targets, closing, reference, answer_kl, answer_weight)
 
 
-def train_paired(model, tokenizer, args):
+def train_paired(model, tokenizer, args, frozen_weights=None):
     parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
@@ -206,7 +219,7 @@ def train_paired(model, tokenizer, args):
             print(f"Update {step}: validation={validation:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
             if validation < best:
                 best, best_step = validation, step
-                best_weights = dict(tree_flatten(model.trainable_parameters()))
+                best_weights = {**(frozen_weights or {}), **dict(tree_flatten(model.trainable_parameters()))}
                 mx.save_safetensors(str(Path(args.output) / "adapters.safetensors"), best_weights)
         if step == steps:
             break
@@ -231,6 +244,7 @@ def main():
     p.add_argument("--paired", nargs="+", help="Compact thinking paired with unchanged native replies, in feature-file order")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
     p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
+    p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
@@ -255,6 +269,8 @@ def main():
         p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
     if args.opening_only and not args.paired:
         p.error("--opening-only requires --paired")
+    if args.think_adapter and (not args.paired or args.resume):
+        p.error("--think-adapter requires paired training and cannot be combined with --resume")
     if args.paired and (args.batch_size != 1 or any(not t.startswith(("self_attn.", "mlp.")) for t in args.targets)):
         p.error("Paired training uses batch size 1 and transformer adapters, keeping the output head frozen")
     output = Path(args.output)
@@ -285,9 +301,17 @@ def main():
     model.freeze()
     lora = {
         "rank": args.rank, "scale": 2.0, "dropout": 0.0,
-        "keys": args.targets,
+        "keys": args.targets + (["model.embed_tokens"] if args.think_adapter else []),
     }
     linear_to_lora_layers(model, args.layers, lora)
+    frozen_weights = None
+    if args.think_adapter:
+        previous = json.loads((Path(args.think_adapter) / "adapter_config.json").read_text())
+        if (previous.get("model") != args.model or previous.get("think_tokens") is not True
+            or previous.get("prompt_tokens") or previous["lora_parameters"]["keys"] != ["model.embed_tokens"]):
+            p.error("--think-adapter must tune only the same model's native thinking tokens")
+        frozen_weights = freeze_thinking_embedding(model.model.embed_tokens,
+            mx.load(str(Path(args.think_adapter) / "adapters.safetensors")), previous["lora_parameters"]["scale"])
     if args.resume:
         previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
         previous_lora = previous["lora_parameters"]
@@ -311,7 +335,7 @@ def main():
         steps_per_save=args.iters + 1, adapter_file=output / "adapters.safetensors",
     )
     if args.paired:
-        train_paired(model, tokenizer, args)
+        train_paired(model, tokenizer, args, frozen_weights)
     else:
         train(
             model, optim.Adam(learning_rate=args.learning_rate),

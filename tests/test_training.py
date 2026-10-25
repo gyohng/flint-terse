@@ -10,17 +10,17 @@ import mlx.core as mx
 import mlx.nn as nn
 from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm.models.flint import Model, ModelArgs
-from mlx_lm.tuner.utils import linear_to_lora_layers
+from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import loss_masks, make_loss, reasoning_loss, train_paired, training_attention
+from train import freeze_thinking_embedding, loss_masks, make_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
 
 
-def tiny_flint(targets=None):
+def tiny_flint(targets=None, rank=2):
     model = Model(ModelArgs(
         model_type="flint", hidden_size=64, num_hidden_layers=2,
         intermediate_size=128, num_attention_heads=2, num_key_value_heads=1,
@@ -33,13 +33,43 @@ def tiny_flint(targets=None):
                 hasattr(m, "to_quantized") and model.quant_predicate(p, m))
     model.freeze()
     linear_to_lora_layers(model, 2, {
-        "rank": 2, "scale": 2.0, "dropout": 0.0,
+        "rank": rank, "scale": 2.0, "dropout": 0.0,
         "keys": targets or ["self_attn.q_proj", "self_attn.v_proj"],
     })
     return model
 
 
 class TrainingTests(unittest.TestCase):
+    def test_fixed_thinking_tokens_survive_attention_checkpoint_roundtrip(self):
+        mx.random.seed(31)
+        original = tiny_flint()
+        embedding, _ = adapt_prompt(original, [6, 7], [6, 7])
+        embedding.lora_b = mx.random.normal(embedding.lora_b.shape) * .01
+        original.eval()
+        weights = {"model.embed_tokens." + k: getattr(embedding, k) for k in ("lora_a", "lora_b")}
+        mx.random.seed(31)
+        combined = tiny_flint(rank=4)
+        config = {"rank": 4, "scale": 2.0, "dropout": 0.0, "keys": ["model.embed_tokens"]}
+        linear_to_lora_layers(combined, 2, config)
+        frozen = freeze_thinking_embedding(combined.model.embed_tokens, weights, 1.0)
+        combined.eval()
+        inputs = mx.array([[2, 6, 12, 7, 22]])
+        self.assertLess(mx.max(mx.abs(original(inputs) - combined(inputs))).item(), 1e-5)
+        self.assertFalse(any("embed_tokens" in k for k, _ in tree_flatten(combined.trainable_parameters())))
+        with tempfile.TemporaryDirectory() as folder:
+            saved = dict(tree_flatten(combined.trainable_parameters()))
+            mx.save_safetensors(str(Path(folder) / "adapters.safetensors"), {**saved, **frozen})
+            config["keys"] += ["self_attn.q_proj", "self_attn.v_proj"]
+            (Path(folder) / "adapter_config.json").write_text(json.dumps({"num_layers": 2, "lora_parameters": config}))
+            mx.random.seed(31)
+            restored = tiny_flint(rank=4)
+            # Remove its zero attention adapters before loading the combined checkpoint.
+            from mlx_lm.tuner.utils import remove_lora_layers
+            remove_lora_layers(restored)
+            load_adapters(restored, folder)
+            restored.eval()
+            self.assertLess(mx.max(mx.abs(combined(inputs) - restored(inputs))).item(), 1e-5)
+
     def test_adding_adapter_targets_preserves_checkpoint_and_enables_mlp_gradients(self):
         targets = ["self_attn." + p + "_proj" for p in ("q", "k", "v", "o")]
         targets += ["mlp.shared_expert." + p + "_proj" for p in ("gate", "up", "down")]
