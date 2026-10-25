@@ -7,6 +7,13 @@ from transformers import AutoTokenizer
 from corpus import BASE, read_rows, select_trace, split_thinking, training_tokens, write_rows
 
 
+def with_examples(messages, examples):
+    n = 0
+    while n < len(messages) and messages[n]["role"] == "system":
+        n += 1
+    return messages[:n] + examples + messages[n:]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command", choices=("build", "select"))
@@ -23,11 +30,9 @@ def main():
         examples = [message for row in read_rows(args.examples) for message in row["messages"]]
         output = []
         for row in rows:
-            messages, n = row["messages"], 0
-            while n < len(messages) and messages[n]["role"] == "system":
-                n += 1
+            messages = row["messages"]
             output.append({**row, "source_messages": messages,
-                           "messages": messages[:n] + examples + messages[n:]})
+                           "messages": with_examples(messages, examples)})
         write_rows(args.output, output)
         print(f"Conditioned {len(output)} prompts with {len(examples) // 2} demonstrations")
         return

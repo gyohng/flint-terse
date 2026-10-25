@@ -8,18 +8,23 @@ from mlx_lm import load
 from mlx_lm.models.cache import make_prompt_cache
 
 from corpus import BASE, read_rows, training_tokens
+from distill import with_examples
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("input")
+    p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
     p.add_argument("--model", default=BASE)
     p.add_argument("--max-tokens", type=int, default=8192)
+    p.add_argument("--examples", help="Add thinking demonstrations to cache teacher features")
     args = p.parse_args()
     if Path(args.output).exists():
         p.error(f"{args.output} exists; choose a new output")
-    rows = read_rows(args.input)
+    rows = [row for path in args.input for row in read_rows(path)]
+    if args.examples:
+        examples = [message for row in read_rows(args.examples) for message in row["messages"]]
+        rows = [{**row, "messages": with_examples(row["messages"], examples)} for row in rows]
     model, tokenizer = load(args.model)
     model.eval()
     close = tokenizer.convert_tokens_to_ids("</think>")
@@ -50,7 +55,8 @@ def main():
         if (i + 1) % 10 == 0 or i + 1 == len(rows):
             print(f"Features {i + 1}/{len(rows)}: {row['id']}", flush=True)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    mx.save_safetensors(args.output, {k: mx.concatenate(v) for k, v in arrays.items()}, metadata={"model": args.model})
+    mx.save_safetensors(args.output, {k: mx.concatenate(v) for k, v in arrays.items()},
+                        metadata={"model": args.model, "examples": args.examples or ""})
     print(f"Saved {args.output}")
 
 

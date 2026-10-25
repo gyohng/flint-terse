@@ -25,18 +25,26 @@ def loss(head, batch, reasoning_kl, answer_kl, replay_kl):
     reference = original.astype(mx.float32)
     reference = reference - mx.logsumexp(reference, axis=-1, keepdims=True)
     logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-    ce = nn.losses.cross_entropy(logits, batch["targets"])
     kl = (mx.exp(reference) * (reference - logp)).sum(axis=-1)
-    supervised = mx.where(batch["replay"], 0, batch["thought_weights"])
-    penalty = mx.where(batch["replay"], replay_kl * batch["weights"],
-                       reasoning_kl * batch["thought_weights"] + answer_kl * batch["answer_weights"])
-    return (ce * supervised + kl * penalty).sum() / batch["weights"].sum()
+    if "teacher_hidden" in batch:
+        teacher = head.linear(batch["teacher_hidden"]).astype(mx.float32)
+        teacher = teacher - mx.logsumexp(teacher, axis=-1, keepdims=True)
+        imitation = (mx.exp(teacher) * (teacher - logp)).sum(axis=-1)
+        supervised = batch["thought_weights"]
+        penalty = reasoning_kl * batch["thought_weights"] + answer_kl * batch["answer_weights"]
+    else:
+        imitation = nn.losses.cross_entropy(logits, batch["targets"])
+        supervised = mx.where(batch["replay"], 0, batch["thought_weights"])
+        penalty = mx.where(batch["replay"], replay_kl * batch["weights"],
+                           reasoning_kl * batch["thought_weights"] + answer_kl * batch["answer_weights"])
+    return (imitation * supervised + kl * penalty).sum() / batch["weights"].sum()
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("features")
-    p.add_argument("--replay", help="Cached original traces for probability preservation")
+    p.add_argument("--replay", nargs="+", help="Cached original traces for probability preservation")
+    p.add_argument("--teacher-features", nargs="+", help="Demonstration-conditioned features, in the same order as features then replay")
     p.add_argument("--output", default="adapters/head")
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--rank", type=int, default=8)
@@ -57,12 +65,27 @@ def main():
     keys = ("hidden", "targets", "thought_weights", "answer_weights", "weights", "valid")
     data = {k: data[k] for k in keys}
     data["replay"] = mx.zeros_like(data["valid"])
-    if args.replay:
-        replay, replay_metadata = mx.load(args.replay, return_metadata=True)
+    for path in args.replay or []:
+        replay, replay_metadata = mx.load(path, return_metadata=True)
         if replay_metadata["model"] != metadata["model"]:
             p.error("Style and replay features must use the same base model")
         replay["replay"] = mx.ones_like(replay["valid"])
         data = {k: mx.concatenate((v, replay[k])) for k, v in data.items()}
+        del replay
+    if args.teacher_features:
+        parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
+        if any(meta["model"] != metadata["model"] for _, meta in parts):
+            p.error("Teacher features must use the same frozen model")
+        teacher = {k: mx.concatenate([part[k] for part, _ in parts])
+                   for k in ("hidden", "targets", "valid", "thought_weights", "answer_weights")}
+        del parts
+        if any(
+            teacher[k].shape != data[k].shape or not bool((teacher[k] == data[k]).all())
+            for k in ("targets", "valid", "thought_weights", "answer_weights")
+        ):
+            p.error("Teacher and student features must describe the same completions and splits")
+        data["teacher_hidden"] = teacher["hidden"]
+        del teacher
     model, _ = load(metadata["model"])
     model.freeze()
     mx.random.seed(args.seed)
@@ -79,6 +102,8 @@ def main():
     if not len(train) or not len(valid):
         p.error("Need training and validation positions")
     keys = ("hidden", "targets", "thought_weights", "answer_weights", "weights", "replay")
+    if args.teacher_features:
+        keys += ("teacher_hidden",)
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     optimizer.init(head.trainable_parameters())
     value_grad = nn.value_and_grad(head, loss)
