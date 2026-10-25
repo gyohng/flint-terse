@@ -190,6 +190,7 @@ def train_paired(model, tokenizer, args):
             if validation < best:
                 best, best_step = validation, step
                 best_weights = dict(tree_flatten(model.trainable_parameters()))
+                mx.save_safetensors(str(Path(args.output) / "adapters.safetensors"), best_weights)
         if step == steps:
             break
         model.train()
@@ -202,8 +203,7 @@ def train_paired(model, tokenizer, args):
         mx.eval(model.trainable_parameters(), optimizer.state)
         if (step + 1) % 5 == 0:
             print(f"Update {step + 1}: loss={total / args.accumulate:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
-    model.load_weights(list(best_weights.items()))
-    mx.save_safetensors(str(Path(args.output) / "adapters.safetensors"), best_weights)
+    model.load_weights(list(best_weights.items()), strict=False)
     print(f"Selected update {best_step}", flush=True)
 
 
