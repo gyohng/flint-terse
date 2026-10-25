@@ -48,7 +48,9 @@ class TrainingTests(unittest.TestCase):
         reference = nn.log_softmax(mx.random.normal((1, 2, 128)), axis=-1)
         full = mx.array([prompt + inputs[0].tolist()])
         with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
-            cache = prefix_cache(model, prompt)
+            shared = prefix_cache(model, prompt[:20])
+            cache = prefix_cache(model, prompt[20:], shared)
+            self.assertEqual(shared[0].offset, 20)
             def whole(m):
                 logits = m(full)[:, len(prompt) + 2:].astype(mx.float32)
                 ce = nn.losses.cross_entropy(logits[:, :3], completion[:, :3]).mean()

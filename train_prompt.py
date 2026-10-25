@@ -5,6 +5,7 @@ import copy
 import json
 import random
 import time
+from os.path import commonprefix
 from pathlib import Path
 
 import mlx.core as mx
@@ -30,8 +31,8 @@ def adapt_prompt(model, token_ids, initial_ids):
     return embedding, initial
 
 
-def prefix_cache(model, prompt):
-    cache = make_prompt_cache(model)
+def prefix_cache(model, prompt, cache=None):
+    cache = make_prompt_cache(model) if cache is None else copy.deepcopy(cache)
     for start in range(0, len(prompt), 512):
         model.model(mx.array([prompt[start:start + 512]]), cache=cache)
         mx.eval([c.state for c in cache])
@@ -114,6 +115,11 @@ def main():
     model.train()
     from mlx_lm.models import flint
     flint.scaled_dot_product_attention = training_attention
+    # Reuse the frozen OpenClaw instructions; keep the original chunk boundaries.
+    long_prompts = [r[0] for split in records.values() for r in split if len(r[0]) >= 1024]
+    shared_prefix = commonprefix(long_prompts) if long_prompts else []
+    shared_prefix = shared_prefix[:len(shared_prefix) // 512 * 512]
+    shared_cache = prefix_cache(model, shared_prefix) if shared_prefix else None
     optimizer = optim.Adam(learning_rate=args.learning_rate)
     grad_fn = nn.value_and_grad(model, prompt_loss)
     schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]],
@@ -121,7 +127,10 @@ def main():
 
     def example(row, training):
         prompt, completion, closing, answer_hidden, _ = row
-        cache = prefix_cache(model, prompt)
+        if shared_cache is not None and prompt[:len(shared_prefix)] == shared_prefix:
+            cache = prefix_cache(model, prompt[len(shared_prefix):], shared_cache)
+        else:
+            cache = prefix_cache(model, prompt)
         inputs = mx.array([token_ids + [assistant] + completion[:-1]])
         reference = mx.stop_gradient(nn.log_softmax(model.lm_head(answer_hidden[None]).astype(mx.float32), axis=-1))
         mx.eval(reference)
