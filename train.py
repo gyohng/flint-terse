@@ -145,7 +145,8 @@ def opening_preference(chosen, chosen_targets, rejected, rejected_targets, refer
     chosen_logp = -nn.losses.cross_entropy(chosen, chosen_targets).mean()
     rejected_logp = -nn.losses.cross_entropy(rejected, rejected_targets).mean()
     margin = (chosen_logp - reference_chosen) - (rejected_logp - reference_rejected)
-    return mx.logaddexp(mx.array(0.0), -margin)
+    # The likelihood term prevents improving the margin by merely degrading both openings.
+    return -chosen_logp + mx.logaddexp(mx.array(0.0), -margin)
 
 
 def train_paired(model, tokenizer, args):
@@ -212,8 +213,8 @@ def train_paired(model, tokenizer, args):
             count, negative_input, negative, positive_logp, negative_logp = preference
             negative_hidden = model.model(mx.array([negative_input]))[:, offset:]
             negative_logits = model.lm_head(negative_hidden).astype(mx.float32)
-            result += 4 * opening_preference(logits[:, 1:1 + count], targets[:, 1:1 + count],
-                                             negative_logits, mx.array([negative]), positive_logp, negative_logp)
+            result += opening_preference(logits[:, 1:1 + count], targets[:, 1:1 + count],
+                                          negative_logits, mx.array([negative]), positive_logp, negative_logp)
         return result
 
     gradient = nn.value_and_grad(model, loss)
