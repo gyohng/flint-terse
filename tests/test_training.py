@@ -91,7 +91,7 @@ class TrainingTests(unittest.TestCase):
     def test_opening_preference_rewards_chosen_and_discourages_rejected(self):
         logits = mx.zeros((1, 2, 8))
         targets = mx.array([[1, 2]])
-        reference = -nn.losses.cross_entropy(logits, targets).mean().item()
+        reference = -nn.losses.cross_entropy(logits, targets).sum().item() / 16
         loss = lambda chosen, rejected: opening_preference(chosen, targets, rejected, targets, reference, reference)
         self.assertAlmostEqual(loss(logits, logits).item(), -reference + 0.69314718, places=6)
         chosen_grad, rejected_grad = mx.grad(loss, argnums=(0, 1))(logits, logits)
@@ -99,6 +99,9 @@ class TrainingTests(unittest.TestCase):
         self.assertGreater(rejected_grad[0, 0, 1].item(), 0)
         self.assertGreater(abs(chosen_grad[0, 0, 1].item()), abs(rejected_grad[0, 0, 1].item()))
         self.assertLess(loss(logits - chosen_grad, logits - rejected_grad).item(), loss(logits, logits).item())
+        short_grad = mx.grad(lambda x: opening_preference(x, targets[:, :1], logits, targets,
+                              reference / 2, reference))(logits[:, :1])
+        self.assertAlmostEqual(short_grad[0, 0, 1].item(), chosen_grad[0, 0, 1].item(), places=6)
 
     def test_compact_thinking_loss_preserves_answers_by_probability(self):
         for closing in (1, 4):

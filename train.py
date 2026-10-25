@@ -141,9 +141,9 @@ def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=
 
 
 def opening_preference(chosen, chosen_targets, rejected, rejected_targets, reference_chosen, reference_rejected):
-    # DPO-style comparison of mean log probabilities over at most 16 opening tokens.
-    chosen_logp = -nn.losses.cross_entropy(chosen, chosen_targets).mean()
-    rejected_logp = -nn.losses.cross_entropy(rejected, rejected_targets).mean()
+    # A fixed denominator keeps one-token empty thoughts from dominating other openings.
+    chosen_logp = -nn.losses.cross_entropy(chosen, chosen_targets).sum() / 16
+    rejected_logp = -nn.losses.cross_entropy(rejected, rejected_targets).sum() / 16
     margin = (chosen_logp - reference_chosen) - (rejected_logp - reference_rejected)
     # The likelihood term prevents improving the margin by merely degrading both openings.
     return -chosen_logp + mx.logaddexp(mx.array(0.0), -margin)
@@ -187,11 +187,11 @@ def train_paired(model, tokenizer, args):
             if completion[1:1 + count] != negative:
                 positive_hidden = teacher["hidden"][cursor + 1:cursor + 1 + count]
                 positive_logits = model.lm_head(positive_hidden[None]).astype(mx.float32)
-                positive_logp = -nn.losses.cross_entropy(positive_logits, mx.array([completion[1:1 + count]])).mean().item()
+                positive_logp = -nn.losses.cross_entropy(positive_logits, mx.array([completion[1:1 + count]])).sum().item() / 16
                 negative_input = ids[:offset + 1] + negative[:-1]
                 negative_hidden = model.model(mx.array([negative_input]))[:, offset:]
                 negative_logits = model.lm_head(negative_hidden).astype(mx.float32)
-                negative_logp = -nn.losses.cross_entropy(negative_logits, mx.array([negative])).mean().item()
+                negative_logp = -nn.losses.cross_entropy(negative_logits, mx.array([negative])).sum().item() / 16
                 preference = (count, negative_input, negative, positive_logp, negative_logp)
             if (i + 1) % 10 == 0:
                 print(f"Frozen opening references: {i + 1}", flush=True)
