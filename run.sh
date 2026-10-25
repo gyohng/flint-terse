@@ -40,13 +40,14 @@ PY
     esac
     .venv/bin/python "$script" "$@"
     ;;
-  build-corpus|select-corpus|batch-capture|distill|replay)
+  build-corpus|select-corpus|batch-capture|build-preferences|distill|replay)
     command="$1"
     shift
     case "$command" in
       build-corpus) script=make_corpus.py ;;
       select-corpus) script=select_corpus.py ;;
       batch-capture) script=batch_capture.py ;;
+      build-preferences) script=preferences.py ;;
       distill) script=distill.py ;;
       replay) script=replay.py ;;
     esac

@@ -3,9 +3,25 @@ import unittest
 from code_checks import check_python
 from corpus import check_answer, prefix_template
 from make_corpus import arithmetic
+from preferences import add_preferences
 
 
 class CorpusTests(unittest.TestCase):
+    def test_preferences_recheck_answers_and_exclude_incomplete_attempts(self):
+        row = {"id": "sum", "messages": [{"role": "user", "content": "20+22?"}],
+               "expected_number": 42, "approved": True, "assistant": {"content": "42"}}
+        candidates = []
+        for answer, complete in [("41", True), ("42", True), ("0", False)]:
+            candidates.append({"id": "sum", "messages": row["messages"], "complete": complete,
+                "text": f"<think>notes</think>{answer}", "assistant": {"content": answer},
+                "ending": "<|user|>", "output_tokens": len(answer), "correct": True})
+        paired = add_preferences([row], candidates)[0]
+        self.assertEqual(paired["rejected_assistant"]["content"], "41")
+        self.assertEqual(paired["assistant"], row["assistant"])
+        self.assertNotIn("rejected_assistant", row)
+        with self.assertRaises(ValueError):
+            add_preferences([{**row, "messages": []}], candidates)
+
     def test_learned_prefix_keeps_history_and_completion_boundary(self):
         from jinja2 import Environment
 
