@@ -16,6 +16,23 @@ from mlx_lm.utils import hf_repo_to_path, save
 from corpus import BASE, configure_adapter_tokenizer
 
 
+CONVERT_GGUF = """
+import json, sys
+sys.path.insert(0, sys.argv.pop(1))
+preserve = set(json.loads(sys.argv.pop(1)))
+import convert_hf_to_gguf as converter
+from conversion.flint import FlintModel
+import gguf
+original = FlintModel.tensor_force_quant
+def tensor_type(self, name, new_name, bid, n_dims):
+    if name in preserve:
+        return gguf.GGMLQuantizationType.F16
+    return original(self, name, new_name, bid, n_dims)
+FlintModel.tensor_force_quant = tensor_type
+converter.main()
+"""
+
+
 def hf_weights(model):
     """Dequantize one projection at a time and restore HF's individual experts."""
     modules = dict(model.named_modules())
@@ -112,6 +129,7 @@ def main():
              if hasattr(module, "fuse")]
     if not fused:
         p.error("No adapter layers found")
+    preserve = json.dumps([name + ".weight" for name, _ in fused])
     model.update_modules(tree_unflatten(fused))
     if args.format == "mlx":
         quant = dict(config["quantization"])
@@ -133,7 +151,7 @@ def main():
                 "--vocab-only", "--outfile", str(tmp / "vocab.gguf"), "--outtype", args.outtype,
             ], check=True)
             subprocess.run([
-                str(converter_python), str(converter), str(tmp / "hf"),
+                str(converter_python), "-c", CONVERT_GGUF, str(converter.parent), preserve, str(tmp / "hf"),
                 "--outfile", str(tmp / output.name), "--model-name", output.stem,
                 "--outtype", args.outtype, "--use-temp-file",
             ], check=True)

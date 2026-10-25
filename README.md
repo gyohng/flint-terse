@@ -67,7 +67,7 @@ lms load local/flint-terse-Q8_0 --identifier flint-terse --context-length 16384 
 ./run.sh replay data/openclaw-episodes.jsonl --model flint-terse --temperature 1 --output runs/episodes-terse.jsonl
 ```
 
-Use the installed key from `lms ls` if it differs. Export merges the adapter, restores HF expert tensors, and uses the pinned llama.cpp converter. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 base. Compare deployed behavior as well as native MLX results.
+Use the installed key from `lms ls` if it differs. Export merges the adapter, restores HF expert tensors, and uses the pinned llama.cpp converter. Adapted modules stay in FP16; the remaining matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 base. Compare deployed behavior as well as native MLX results.
 
 `openclaw sync` reads the authorized remote system context and exec/process schemas over SSH. Episode replay feeds actual model responses back into the conversation with fixed tool observations. Generated tool calls are checked, not executed.
 
