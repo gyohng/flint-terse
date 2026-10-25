@@ -528,7 +528,7 @@ def trace_scores(model, tokenizer, row, cache=None):
         nll.extend(values[0].tolist())
     return {
         "reasoning_tokens": closing - offset - 1,
-        "reasoning_nll": statistics.mean(nll[offset:closing - 1]),
+        "reasoning_nll": statistics.mean(nll[offset:closing - 1]) if closing > offset + 1 else 0.0,
         "answer_nll": statistics.mean(nll[closing:-1]),
         "ending_nll": nll[-1],
     }
