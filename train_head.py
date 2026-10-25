@@ -22,7 +22,7 @@ def loss(head, batch, reasoning_kl, answer_kl, replay_kl):
     original = head.linear(hidden)
     delta = (head.scale * ((hidden @ head.lora_a) @ head.lora_b)).astype(hidden.dtype)
     logits = (original + delta).astype(mx.float32)
-    reference = original.astype(mx.float32)
+    reference = head.linear(batch["answer_teacher_hidden"]).astype(mx.float32) if "answer_teacher_hidden" in batch else original.astype(mx.float32)
     reference = reference - mx.logsumexp(reference, axis=-1, keepdims=True)
     logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
     kl = (mx.exp(reference) * (reference - logp)).sum(axis=-1)
@@ -44,6 +44,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("features")
     p.add_argument("--replay", nargs="+", help="Cached original traces for probability preservation")
+    p.add_argument("--replay-answer-only", action="store_true", help="Preserve original replies without reinforcing verbose thinking")
     p.add_argument("--teacher-features", nargs="+", help="Demonstration-conditioned features, in the same order as features then replay")
     p.add_argument("--output", default="adapters/head")
     p.add_argument("--steps", type=int, default=500)
@@ -63,12 +64,20 @@ def main():
         p.error(f"{output} exists; choose a new output")
     data, metadata = mx.load(args.features, return_metadata=True)
     keys = ("hidden", "targets", "thought_weights", "answer_weights", "weights", "valid")
+    if "answer_teacher_hidden" in data:
+        keys += ("answer_teacher_hidden",)
     data = {k: data[k] for k in keys}
     data["replay"] = mx.zeros_like(data["valid"])
     for path in args.replay or []:
         replay, replay_metadata = mx.load(path, return_metadata=True)
         if replay_metadata["model"] != metadata["model"]:
             p.error("Style and replay features must use the same base model")
+        if "answer_teacher_hidden" in data:
+            replay["answer_teacher_hidden"] = replay["hidden"]
+        if args.replay_answer_only:
+            indices = mx.array([i for i, w in enumerate(replay["answer_weights"].tolist()) if w > 0])
+            replay = {k: v[indices] for k, v in replay.items()}
+            replay["weights"] = replay["answer_weights"]
         replay["replay"] = mx.ones_like(replay["valid"])
         data = {k: mx.concatenate((v, replay[k])) for k, v in data.items()}
         del replay
@@ -102,6 +111,8 @@ def main():
     if not len(train) or not len(valid):
         p.error("Need training and validation positions")
     keys = ("hidden", "targets", "thought_weights", "answer_weights", "weights", "replay")
+    if "answer_teacher_hidden" in data:
+        keys += ("answer_teacher_hidden",)
     if args.teacher_features:
         keys += ("teacher_hidden",)
     optimizer = optim.Adam(learning_rate=args.learning_rate)

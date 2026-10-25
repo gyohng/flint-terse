@@ -89,6 +89,11 @@ class TrainingTests(unittest.TestCase):
         batch["thought_weights"], batch["answer_weights"] = mx.zeros((6,)), mx.ones((6,))
         self.assertEqual(head_loss(head, batch, 0, 0, 0).item(), 0)
         self.assertGreater(head_loss(head, batch, 0, 1, 0).item(), 0)
+        batch["answer_teacher_hidden"] = hidden + .3
+        teacher = nn.log_softmax(head.linear(batch["answer_teacher_hidden"]).astype(mx.float32), axis=-1)
+        student = nn.log_softmax(head(hidden).astype(mx.float32), axis=-1)
+        expected = (mx.exp(teacher) * (teacher - student)).sum(axis=-1).mean()
+        self.assertAlmostEqual(head_loss(head, batch, 0, 1, 0).item(), expected.item(), places=5)
         batch["replay"] = mx.ones((6,), dtype=mx.bool_)
         self.assertEqual(head_loss(head, batch, 0, 1, 0).item(), 0)
         self.assertGreater(head_loss(head, batch, 0, 0, 1).item(), 0)
