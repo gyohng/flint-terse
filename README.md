@@ -1,12 +1,12 @@
 # flint-terse
 
-Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. The current recipe tunes existing thinking-token embeddings and a small attention adapter. It adds no text to the prompt.
+Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. The current recipe trains a small attention adapter. It adds no text to the prompt.
 
 The older `flint-terse-prompt-half` is installed in LM Studio but unloaded. Its chat template appends a learned 17-token instruction to the user message; that caused the quoted “Think in brief working notes…” line. It is not a finished solution. No replacement has been installed yet.
 
 ## Current result
 
-**Reliable recap removal with preserved accuracy is not solved.** The current run, `adapters/correctness-qv`, adds checked correctness preferences to the training objective. It has not been evaluated or exported.
+**Reliable recap removal with preserved accuracy is not solved.** `adapters/correctness-qv` fixed the direct Python request but scored only 38/50 on math/code. The next run, `adapters/correctness-base-qv`, uses the same correctness objective with Flint's original thinking-token embeddings.
 
 These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and a 4,096-token budget:
 
@@ -15,12 +15,13 @@ These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoi
 | Base Flint | 45/50 | — |
 | `on-policy-qv` attention adapter | 44/50 | 26%; still recaps |
 | `think-attention` native tokens + attention | 40/50 | 93%; loses accuracy |
+| `correctness-qv` native tokens + attention + DPO | 38/50 | 94%; loses accuracy |
 
-Captures are in `runs/fresh-{base,on-policy-qv,think-attention}.jsonl`. These are development results, not independent proof of generalization. `data/release-eval.jsonl` reserves 100 unseen math/code tasks; `data/release-chat.jsonl` adds six ordinary and multistep requests. Neither has been used yet.
+Captures are in `runs/fresh-{base,on-policy-qv,think-attention,correctness-qv}.jsonl`. On ten ordinary requests, `correctness-qv` completed all ten with 61% fewer thinking tokens; longer constrained requests still produced drafting loops, and its binary-search explanation misstated which half gets discarded. It has not been exported. These are development results, not independent proof of generalization. `data/release-eval.jsonl` reserves 100 unseen math/code tasks; `data/release-chat.jsonl` adds six ordinary and multistep requests. Neither has been used yet.
 
 ## How it works
 
-The native-token adapter learns 4,096 values in the existing `<think>` and `</think>` input embeddings. These stay frozen during the next stage, which learns 557,056 values in rank-8 query/value updates across the last eight transformer layers. The output head and other model weights stay frozen.
+The attention adapter learns 557,056 values in rank-8 query/value updates across the last eight transformer layers. The input embeddings, output head and other model weights stay frozen. Training caches activations from the frozen first 41 layers and recomputes all eight trainable layers, retaining their complete context and gradients. The optional native-token experiment changes 4,096 values in the existing `<think>` and `</think>` embeddings; its aggressive compression has lost accuracy.
 
 Training uses Flint’s probabilities in three ways:
 
@@ -36,7 +37,7 @@ The current corpus has **410 reviewed pairs: 365 train, 45 validation**—189 ma
 
 Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified memory. The checkpoint uses about 22.6 GB, the GGUF 42.6 GB, and export needs roughly 170 GB temporary free space. Unload LM Studio models before training.
 
-Using the existing `adapters/think-tokens` checkpoint, rebuild the frozen answer features and train the current attention recipe:
+Using the existing `adapters/think-tokens` checkpoint as the probability teacher for its sampled responses, rebuild the frozen answer features and train the current attention recipe:
 
 ```sh
 ./run.sh setup
@@ -47,7 +48,7 @@ Using the existing `adapters/think-tokens` checkpoint, rebuild the frozen answer
 ./run.sh cache-features data/adaptive-native.jsonl --original-reasoning --max-tokens 16384 --output runs/native-teacher-new.safetensors
 ./run.sh train --paired data/adaptive-sampled.jsonl data/adaptive-native.jsonl \
   --teacher-features runs/sampled-teacher-new.safetensors runs/native-teacher-new.safetensors \
-  --think-adapter adapters/think-tokens --preference-weight 1 --preference-beta .1 \
+  --preference-weight 1 --preference-beta .1 \
   --answer-weight 1 --kl 2 --start-weight 3 --layers 8 \
   --learning-rate .000005 --iters 800 --max-tokens 16384 --output adapters/correctness-new
 ./run.sh batch-capture data/direct-eval.jsonl --adapter adapters/correctness-new --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/direct-new.jsonl

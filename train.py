@@ -12,6 +12,7 @@ import mlx.optimizers as optim
 import numpy as np
 from mlx.utils import tree_flatten, tree_map
 from mlx_lm import load
+from mlx_lm.models.base import create_attention_mask
 from mlx_lm.tuner.trainer import TrainingArgs, grad_checkpoint, iterate_batches, train
 from mlx_lm.tuner.utils import linear_to_lora_layers, print_trainable_parameters
 
@@ -163,8 +164,29 @@ def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=
     return thought + answer_loss(logits, targets, closing, reference, answer_kl, answer_weight)
 
 
-def completion_logp(model, ids, offset):
-    hidden = model.model(mx.array([ids[:-1]]))[:, offset - 1:]
+def run_layers(model, hidden, start=0, stop=None):
+    full = create_attention_mask(hidden)
+    sliding = create_attention_mask(hidden, window_size=model.args.sliding_window)
+    for layer in model.layers[start:stop]:
+        hidden = layer(hidden, sliding if layer.use_sliding else full)
+    return hidden
+
+
+def frozen_hidden(model, ids, first_layer):
+    hidden = model.model.embed_tokens(mx.array([ids[:-1]]))
+    hidden = mx.stop_gradient(run_layers(model, hidden, stop=first_layer))
+    mx.eval(hidden)
+    return hidden
+
+
+def completion_hidden(model, ids, offset, cached=None, first_layer=0):
+    hidden = (model.model(mx.array([ids[:-1]])) if cached is None
+              else model.model.norm(run_layers(model, cached, start=first_layer)))
+    return hidden[:, offset - 1:]
+
+
+def completion_logp(model, ids, offset, cached=None, first_layer=0):
+    hidden = completion_hidden(model, ids, offset, cached, first_layer)
     logits = model.lm_head(hidden).astype(mx.float32)
     return -nn.losses.cross_entropy(logits, mx.array([ids[offset:]]), reduction="sum")
 
@@ -175,6 +197,11 @@ def preference_loss(chosen, rejected, reference_ratio, beta):
 
 
 def train_paired(model, tokenizer, args, frozen_weights=None):
+    trainable = [name for name, _ in tree_flatten(model.trainable_parameters())]
+    if not trainable or any(not name.startswith("model.layers.") for name in trainable):
+        raise ValueError("Paired training requires frozen embeddings, final norm and output head")
+    first_layer = min(int(name.split(".")[2]) for name in trainable)
+    print(f"Caching the frozen first {first_layer} layers; training the remaining layers", flush=True)
     parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
@@ -182,7 +209,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     del parts
     records, cursor = {"train": [], "valid": []}, 0
     preferences = 0
-    model.eval()
+    model.train()
     close = tokenizer.convert_tokens_to_ids("</think>")
     for row in (r for path in args.paired for r in read_rows(path)):
         ids, offset = training_tokens(row, tokenizer)
@@ -197,6 +224,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         if teacher["targets"][cursor:cursor + len(native)].tolist() != native:
             raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
         hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
+        cached = frozen_hidden(model, ids, first_layer)
         preference = None
         if args.preference_weight and row.get("rejected_assistant"):
             rejected = {**row, "assistant": row["rejected_assistant"], "ending": row["rejected_ending"]}
@@ -204,14 +232,17 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             if (len(rejected_ids) > args.max_tokens or rejected_offset != offset
                 or rejected_ids[:offset] != ids[:offset]):
                 raise ValueError(f"{row['id']}: invalid rejected response or mismatched prompt")
-            chosen_logp = completion_logp(model, ids, offset).item()
-            rejected_logp = completion_logp(model, rejected_ids, offset).item()
-            preference = (rejected_ids, chosen_logp - rejected_logp)
+            rejected_cached = frozen_hidden(model, rejected_ids, first_layer)
+            chosen_logp = completion_logp(model, ids, offset, cached, first_layer).item()
+            rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer).item()
+            preference = (rejected_ids, rejected_cached, chosen_logp - rejected_logp)
             preferences += 1
             if preferences % 25 == 0:
                 print(f"Cached {preferences} frozen preference ratios", flush=True)
-        records[row["split"]].append((ids, offset, closing, hidden, preference, row.get("loss_weight", 1)))
+        records[row["split"]].append((ids, offset, closing, hidden, cached, preference, row.get("loss_weight", 1)))
         cursor += len(native)
+        if sum(map(len, records.values())) % 50 == 0:
+            print(f"Cached {sum(map(len, records.values()))} training/validation responses", flush=True)
     if cursor != len(teacher["targets"]) or not all(records.values()):
         raise ValueError("Need aligned teacher features and nonempty train/validation splits")
     if args.preference_weight and not any(row[-2] is not None for row in records["train"]):
@@ -219,16 +250,16 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     del teacher
     grad_checkpoint(model.layers[0])
 
-    def loss(model, ids, offset, closing, reference, preference):
-        hidden = model.model(mx.array([ids[:-1]]))[:, offset - 1:]
+    def loss(model, ids, offset, closing, reference, cached, preference):
+        hidden = completion_hidden(model, ids, offset, cached, first_layer)
         logits = model.lm_head(hidden).astype(mx.float32)
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
                                 args.kl, args.start_weight, args.answer_weight, args.opening_only)
         if preference is not None:
-            rejected_ids, reference_ratio = preference
+            rejected_ids, rejected_cached, reference_ratio = preference
             chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum")
-            rejected_logp = completion_logp(model, rejected_ids, offset)
+            rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer)
             result += args.preference_weight * preference_loss(chosen_logp, rejected_logp, reference_ratio, args.preference_beta)
         return result
 
@@ -237,10 +268,10 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]], k=args.iters)
 
     def example(row, training):
-        ids, offset, closing, hidden, preference, _ = row
+        ids, offset, closing, hidden, cached, preference, _ = row
         reference = nn.log_softmax(model.lm_head(hidden[None]).astype(mx.float32), axis=-1)
         mx.eval(reference)
-        result = (gradient if training else loss)(model, ids, offset, closing, reference, preference)
+        result = (gradient if training else loss)(model, ids, offset, closing, reference, cached, preference)
         mx.eval(result)
         return result
 

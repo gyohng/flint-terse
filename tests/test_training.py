@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import completion_logp, freeze_thinking_embedding, loss_masks, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
+from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -40,6 +40,27 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_frozen_layer_cache_preserves_likelihood_and_gradients(self):
+        mx.random.seed(19)
+        model = tiny_flint()
+        model.layers[0].freeze()
+        for _, module in model.layers[1].named_modules():
+            if hasattr(module, "lora_b"):
+                module.lora_b = mx.random.normal(module.lora_b.shape) * .01
+        model.train()
+        with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
+            for length in (9, 65):
+                ids = (mx.arange(length) % 100).tolist()
+                cached = frozen_hidden(model, ids, 1)
+                full = nn.value_and_grad(model, lambda m: completion_logp(m, ids, 3))(model)
+                reused = nn.value_and_grad(model, lambda m: completion_logp(m, ids, 3, cached, 1))(model)
+                self.assertAlmostEqual(full[0].item(), reused[0].item(), places=5)
+                expected, actual = dict(tree_flatten(full[1])), dict(tree_flatten(reused[1]))
+                self.assertEqual(expected.keys(), actual.keys())
+                self.assertTrue(any(bool((g != 0).any()) for g in expected.values()))
+                for name, grad in expected.items():
+                    self.assertLess(mx.max(mx.abs(grad - actual[name])).item(), 1e-5)
+
     def test_correctness_preferences_are_centered_on_the_starting_policy(self):
         chosen, rejected = mx.array(-20.0), mx.array(-5.0)
         reference = -15.0
