@@ -16,7 +16,7 @@ def with_examples(messages, examples):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=("build", "select"))
+    p.add_argument("command", choices=("build", "select", "pair"))
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
     p.add_argument("--examples", default="data/style-examples.jsonl")
@@ -38,9 +38,29 @@ def main():
         return
     tokenizer = AutoTokenizer.from_pretrained(BASE)
     baseline = {r["id"]: r for path in (args.baseline or []) for r in read_rows(path)}
+    if args.command == "pair":
+        output = []
+        for row in rows:
+            original = baseline.get(row["id"])
+            if original is None or original.get("approved") is not True:
+                continue
+            if row.get("approved") is not True:
+                p.error(f"{row['id']}: compact trace needs review")
+            if original["messages"] != row["messages"] or original.get("tools") != row.get("tools"):
+                p.error(f"{row['id']}: baseline is a different task")
+            paired = {**row, "teacher_reasoning": original["assistant"]["reasoning_content"],
+                      "assistant": {**original["assistant"], "reasoning_content": row["assistant"]["reasoning_content"]},
+                      "ending": original["ending"]}
+            training_tokens(paired, tokenizer)
+            output.append(paired)
+        if not output:
+            p.error("No approved native/compact pairs")
+        write_rows(args.output, output)
+        print(f"Paired {len(output)} traces; original final replies preserved")
+        return
     output, lengths, retained = [], [], 0
     keys = ("id", "family", "tools", "expected", "expected_number", "expected_tool", "expected_json",
-            "tests", "test_imports", "split", "assistant", "ending")
+            "tests", "test_imports", "split", "assistant", "ending", "loss_weight")
     for row in rows:
         original = baseline.get(row["id"])
         if original is not None and (original["messages"] != row["source_messages"] or original.get("tools") != row.get("tools")):
