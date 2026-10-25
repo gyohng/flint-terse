@@ -1,4 +1,5 @@
 import tempfile
+import json
 import unittest
 from dataclasses import asdict
 from pathlib import Path
@@ -13,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers
 
 from corpus import chat_messages, check_answer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import loss_masks, make_loss, reasoning_loss, training_attention
+from train import loss_masks, make_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -39,6 +40,28 @@ def tiny_flint():
 
 
 class TrainingTests(unittest.TestCase):
+    def test_paired_training_saves_and_restores_only_adapter_weights(self):
+        model = tiny_flint()
+        ids, offset = [2, 3, 6, 12, 7, 22, 1], 2
+        hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            features, corpus = folder / "features.safetensors", folder / "corpus.jsonl"
+            mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(ids[offset:])}, metadata={"model": "tiny"})
+            rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
+            corpus.write_text("\n".join(json.dumps(r) for r in rows))
+            args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=corpus,
+                max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, output=folder)
+            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
+            with patch("train.training_tokens", return_value=(ids, offset)), patch("train.grad_checkpoint"), \
+                 patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
+                train_paired(model, tokenizer, args)
+            saved = mx.load(str(folder / "adapters.safetensors"))
+            current = dict(tree_flatten(model.trainable_parameters()))
+            self.assertEqual(saved.keys(), current.keys())
+            for key in saved:
+                self.assertTrue(bool((saved[key] == current[key]).all()))
+
     def test_compact_thinking_loss_preserves_answers_by_probability(self):
         for closing in (1, 4):
             with self.subTest(closing=closing):
