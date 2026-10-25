@@ -1,11 +1,32 @@
 import unittest
 
 from code_checks import check_python
-from corpus import check_answer
+from corpus import check_answer, prefix_template
 from make_corpus import arithmetic
 
 
 class CorpusTests(unittest.TestCase):
+    def test_learned_prefix_keeps_history_and_completion_boundary(self):
+        from jinja2 import Environment
+
+        template = """{%- for m in messages -%}
+{%- if m.role == 'user' -%}<|user|>{{ m.content }}
+{%- elif m.role == 'assistant' -%}
+<|assistant|>{{ m.content }}
+{%- endif -%}{%- endfor -%}
+{%- if add_generation_prompt -%}
+<|assistant|>
+{%- endif -%}"""
+        adapted = Environment().from_string(prefix_template(template, ["<|reserved_1|>"]))
+        messages = [{"role": "user", "content": "Old"}, {"role": "assistant", "content": "Reply"},
+                    {"role": "user", "content": "New"}]
+        prompt = adapted.render(messages=messages, add_generation_prompt=True)
+        full = adapted.render(messages=messages + [{"role": "assistant", "content": "<think>notes</think>answer"}],
+                              add_generation_prompt=False)
+        self.assertEqual(full, prompt + "<think>notes</think>answer")
+        self.assertEqual(prompt.count("<|reserved_1|>"), 1)
+        self.assertTrue(prompt.startswith("<|user|>Old<|assistant|>Reply<|user|>New"))
+
     def test_numeric_answers_require_the_whole_answer(self):
         for text, expected in [("42", True), ("42.0", True), ("41, not 42", False), ("142", False)]:
             self.assertEqual(check_answer({"expected_number": "42"}, text, True), expected)

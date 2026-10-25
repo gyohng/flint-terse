@@ -36,11 +36,11 @@ The source math and code tasks come from [GSM8K](https://github.com/openai/grade
 
 `score` and `rewrite` recompute probabilities under each edited prefix. Training can also penalize divergence from the frozen base distribution. Neither small coefficient movement nor low probability distance guarantees preserved behavior; generation checks decide whether a candidate is useful.
 
-The current probability-distillation experiment evaluates Flint with terse-thinking demonstrations on both native and compact traces. It matches those distributions only inside thinking; final-answer probabilities are anchored to the original, unconditioned Flint. Cached hidden states let the trainer compute the full vocabulary distributions without saving enormous probability tables.
+`data/corpus-paired.jsonl` pairs 378 compact traces with the original reasoning and unchanged final replies. The current experiment learns a short prefix in existing reserved-token embeddings, freezing ordinary embeddings, the transformer and the output head. Its objective combines short-thinking supervision with answer KL: the shortened context must reproduce the answer distribution from the original full reasoning. Cached native hidden states supply those probabilities without enormous probability tables. The prefix is included automatically in the exported chat template.
 
 ## Training and comparison
 
-The scripts expose experimental methods through `--help`: `train` for attention QLoRA and `train-head` for an output-head adapter. Both retain the frozen base checkpoint. The current experiments are not validated recipes. Rejected early-stop and token-embedding experiments remain in Git history.
+The scripts expose experimental methods through `--help`: `train-prompt` for reserved-token embeddings, `train` for attention QLoRA and `train-head` for an output-head adapter. They retain the frozen base checkpoint. The current experiments are not validated recipes. Rejected early-stop and single-token experiments remain in Git history.
 
 Use identical prompts, sampling settings and budgets for paired evaluation. Independent per-task random streams prevent one short completion from changing every later task's random draws.
 
@@ -74,5 +74,7 @@ Use the installed key from `lms ls` if it differs. Export merges the adapter, re
 ## Research
 
 [ConPress](https://arxiv.org/abs/2602.01472) studies concise reasoning SFT; [ShorterBetter](https://arxiv.org/abs/2504.21370) uses shortest-correct rollouts for RL. [Prompt tuning](https://arxiv.org/abs/2104.08691) motivates learning a small input representation with a frozen transformer. These inform experiments, not a claim of a universally best method or reproduced published gains on Flint.
+
+[Truncated-Reasoning Self-Distillation](https://arxiv.org/abs/2603.13274) uses a full-reasoning teacher's answer distribution to train a student on less reasoning. Our paired objective applies that principle to checked compact traces and a learned input prefix.
 
 [Flint's model card](https://huggingface.co/RecursiveSI/flint) recommends temperature 1, top-p .95 and top-k 20. Our 4,096-token comparison budget measures practical local behavior, below its recommended budget for hard problems.

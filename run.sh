@@ -29,12 +29,13 @@ PY
   prepare|capture|rewrite|compare|score)
     .venv/bin/python corpus.py "$@"
     ;;
-  train|train-head|cache-features)
+  train|train-head|train-prompt|cache-features)
     command="$1"
     shift
     case "$command" in
       train) script=train.py ;;
       train-head) script=train_head.py ;;
+      train-prompt) script=train_prompt.py ;;
       cache-features) script=cache_features.py ;;
     esac
     .venv/bin/python "$script" "$@"

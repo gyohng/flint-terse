@@ -13,7 +13,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 from mlx_lm import load
 from mlx_lm.utils import hf_repo_to_path, save
 
-from corpus import BASE
+from corpus import BASE, configure_adapter_tokenizer
 
 
 def hf_weights(model):
@@ -35,7 +35,7 @@ def hf_weights(model):
             yield name, value
 
 
-def write_hf(model, config, source, output, shard_bytes=2_000_000_000):
+def write_hf(model, config, source, output, shard_bytes=2_000_000_000, template=None):
     config = dict(config)
     for key in ("quantization", "quantization_config", "mlx_export"):
         config.pop(key, None)
@@ -51,6 +51,12 @@ def write_hf(model, config, source, output, shard_bytes=2_000_000_000):
         path = source / name
         if path.exists():
             shutil.copyfile(path, output / name)
+    if template is not None:
+        tokenizer_config = output / "tokenizer_config.json"
+        tokenizer_data = json.loads(tokenizer_config.read_text())
+        tokenizer_data["chat_template"] = template
+        tokenizer_config.write_text(json.dumps(tokenizer_data, ensure_ascii=False) + "\n")
+        (output / "chat_template.jinja").write_text(template)
 
     shard, size, total, weight_map = {}, 0, 0, {}
     number = 0
@@ -100,7 +106,8 @@ def main():
         if not converter.exists() or not converter_python.exists():
             p.error("Run ./run.sh setup-gguf first")
     model, tokenizer, config = load(args.model, adapter_path=args.adapter, return_config=True)
-    # Only adapted attention projections become BF16/FP16. Experts stay INT4.
+    template = configure_adapter_tokenizer(tokenizer, args.adapter)
+    # Only adapted modules become BF16/FP16. Experts stay INT4.
     fused = [(name, module.fuse(dequantize=True)) for name, module in model.named_modules()
              if hasattr(module, "fuse")]
     if not fused:
@@ -117,7 +124,7 @@ def main():
         # HF and converter scratch files are temporary, not extra model copies to retain.
         with tempfile.TemporaryDirectory(prefix=".flint-gguf-", dir=output.parent) as tmp:
             tmp = Path(tmp)
-            write_hf(model, config, args.model, tmp / "hf")
+            write_hf(model, config, args.model, tmp / "hf", template=template)
             del model, fused
             gc.collect()
             mx.clear_cache()

@@ -34,6 +34,29 @@ def prompt_text(row, tokenizer):
     )
 
 
+def prefix_template(template, tokens):
+    prefix = "".join(tokens)
+    for before, after in (
+        ("{%- if add_generation_prompt -%}\n<|assistant|>",
+         "{%- if add_generation_prompt -%}\n" + prefix + "<|assistant|>"),
+        ("{%- elif m.role == 'assistant' -%}\n<|assistant|>",
+         "{%- elif m.role == 'assistant' -%}\n{%- if loop.last and not add_generation_prompt -%}"
+         + prefix + "{%- endif -%}<|assistant|>"),
+    ):
+        if template.count(before) != 1:
+            raise ValueError("Unexpected Flint chat template")
+        template = template.replace(before, after)
+    return template
+
+
+def configure_adapter_tokenizer(tokenizer, adapter):
+    if adapter:
+        config = json.loads((Path(adapter) / "adapter_config.json").read_text())
+        if tokens := config.get("prompt_tokens"):
+            tokenizer.chat_template = prefix_template(tokenizer.chat_template, tokens)
+            return tokenizer.chat_template
+
+
 def training_tokens(row, tokenizer, require_approved=True):
     """Mask the entire prompt; preserve native think and tool delimiters."""
     if require_approved and row.get("approved") is not True:
@@ -280,6 +303,7 @@ def capture(args):
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     else:
         model, tokenizer = load(args.model, adapter_path=args.adapter)
+        configure_adapter_tokenizer(tokenizer, args.adapter)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("x") as f:
@@ -505,6 +529,7 @@ def score(args):
     from mlx_lm import load
 
     model, tokenizer = load(args.model, adapter_path=args.adapter)
+    configure_adapter_tokenizer(tokenizer, args.adapter)
     for row in read_rows(args.input):
         print(json.dumps({"id": row["id"], **trace_scores(model, tokenizer, row)}), flush=True)
 

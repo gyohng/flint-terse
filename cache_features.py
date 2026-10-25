@@ -19,12 +19,15 @@ def main():
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--examples", help="Add thinking demonstrations to cache teacher features")
     p.add_argument("--weight", type=float, default=1, help="Relative loss weight per example")
+    p.add_argument("--original-reasoning", action="store_true", help="Use teacher_reasoning from a paired corpus")
     args = p.parse_args()
     if Path(args.output).exists():
         p.error(f"{args.output} exists; choose a new output")
     if args.weight <= 0:
         p.error("Weight must be positive")
     rows = [row for path in args.input for row in read_rows(path)]
+    if args.original_reasoning:
+        rows = [{**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}} for row in rows]
     if args.examples:
         examples = [message for row in read_rows(args.examples) for message in row["messages"]]
         rows = [{**row, "messages": with_examples(row["messages"], examples)} for row in rows]

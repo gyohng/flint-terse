@@ -9,7 +9,7 @@ from mlx_lm import load
 from mlx_lm.generate import BatchGenerator
 from mlx_lm.sample_utils import apply_top_k, apply_top_p, make_sampler
 
-from corpus import BASE, check_answer, parse_assistant, prompt_text, read_rows, report, select_trace, split_thinking
+from corpus import BASE, check_answer, configure_adapter_tokenizer, parse_assistant, prompt_text, read_rows, report, select_trace, split_thinking
 
 
 def request_sampler(seed, temperature):
@@ -47,6 +47,7 @@ def main():
     if args.limit:
         rows = rows[:args.limit]
     model, tokenizer = load(args.model, adapter_path=args.adapter)
+    configure_adapter_tokenizer(tokenizer, args.adapter)
     mx.random.seed(args.seed)
     prompts = [tokenizer.encode(prompt_text(row, tokenizer) + row.get("generation_prefix", ""), add_special_tokens=False)
                for row in rows for _ in range(args.samples)]

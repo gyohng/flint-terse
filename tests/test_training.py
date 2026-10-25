@@ -16,6 +16,7 @@ from export import write_hf
 from train import loss_masks, make_loss, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
+from train_prompt import adapt_prompt, prefix_cache, prompt_loss
 
 
 def tiny_flint():
@@ -38,6 +39,32 @@ def tiny_flint():
 
 
 class TrainingTests(unittest.TestCase):
+    def test_reserved_prompt_gradients_and_fusion_leave_other_rows_unchanged(self):
+        model = tiny_flint()
+        embedding, _ = adapt_prompt(model, [100, 101], [10, 11])
+        prompt = [2, 3, 4, 5] * 10
+        completion = mx.array([[6, 42, 7, 11, 1]])
+        inputs = mx.array([[100, 101, 8, 6, 42, 7, 11]])
+        reference = nn.log_softmax(mx.random.normal((1, 2, 128)), axis=-1)
+        full = mx.array([prompt + inputs[0].tolist()])
+        with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
+            cache = prefix_cache(model, prompt)
+            def whole(m):
+                logits = m(full)[:, len(prompt) + 2:].astype(mx.float32)
+                ce = nn.losses.cross_entropy(logits[:, :3], completion[:, :3]).mean()
+                kl = (mx.exp(reference) * (reference - nn.log_softmax(logits[:, 3:], axis=-1))).sum(axis=-1).mean()
+                return ce + kl
+            expected, gradient = nn.value_and_grad(model, whole)(model)
+            actual, cached = nn.value_and_grad(model, prompt_loss)(model, inputs, completion, cache, 2, 2, reference, 1)
+            self.assertAlmostEqual(expected.item(), actual.item(), places=5)
+            self.assertEqual([k for k, _ in tree_flatten(cached)], ["model.embed_tokens.lora_b"])
+            self.assertLess(mx.max(mx.abs(gradient["model"]["embed_tokens"]["lora_b"] - cached["model"]["embed_tokens"]["lora_b"])).item(), 1e-5)
+        original = embedding.embedding(mx.arange(128))
+        fused = embedding.fuse(dequantize=True)
+        unchanged = mx.array([i for i in range(128) if i not in (100, 101)])
+        self.assertTrue(bool((fused.weight[unchanged] == original[unchanged]).all()))
+        self.assertLess(mx.max(mx.abs(fused(mx.arange(128)) - embedding(mx.arange(128)))).item(), 1e-5)
+
     def test_head_training_matches_inference_and_keeps_base_frozen(self):
         from mlx_lm.tuner.lora import LoRALinear
 
@@ -165,8 +192,13 @@ class TrainingTests(unittest.TestCase):
             output = Path(tmp) / "hf"
             original = '{"tokenizer_class":"PreTrainedTokenizerFast"}'
             (Path(tmp) / "tokenizer_config.json").write_text(original)
-            write_hf(model, asdict(model.args), tmp, output, shard_bytes=100_000)
-            self.assertEqual((output / "tokenizer_config.json").read_text(), original)
+            template = "<|reserved_150143|><|assistant|>"
+            write_hf(model, asdict(model.args), tmp, output, shard_bytes=100_000, template=template)
+            import json
+            exported = json.loads((output / "tokenizer_config.json").read_text())
+            self.assertEqual(exported["tokenizer_class"], "PreTrainedTokenizerFast")
+            self.assertEqual(exported["chat_template"], template)
+            self.assertEqual((output / "chat_template.jinja").read_text(), template)
             restored, _ = load_model(output)
             restored.eval()
             self.assertLess(mx.max(mx.abs(restored(x) - expected)).item(), 1e-4)
