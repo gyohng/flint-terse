@@ -126,9 +126,14 @@ def relative_weight_change(model):
 
 def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
     answer = nn.log_softmax(logits[:, closing + 1:], axis=-1)
-    preservation = (mx.exp(reference) * (reference - answer)).sum(axis=-1).mean()
+    divergence = (mx.exp(reference) * (reference - answer)).sum(axis=-1)
+    # Language and reply format are chosen early; long answers must not dilute that signal.
+    preservation = .5 * (divergence.mean() + divergence[:, :8].mean())
     # Numeric replies can be one token long; do not give their terminator equal reward.
-    answer_ce = nn.losses.cross_entropy(logits[:, closing + 1:-1], targets[:, closing + 1:-1]).mean() if answer_weight else 0
+    answer_ce = 0
+    if answer_weight:
+        nll = nn.losses.cross_entropy(logits[:, closing + 1:-1], targets[:, closing + 1:-1])
+        answer_ce = .5 * (nll.mean() + nll[:, :8].mean())
     return answer_kl * preservation + answer_weight * answer_ce
 
 

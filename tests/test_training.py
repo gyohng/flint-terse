@@ -117,6 +117,17 @@ class TrainingTests(unittest.TestCase):
                 self.assertLess(mx.max(mx.abs(gradient[:, -1])).item(), 1e-6)
                 self.assertGreater(mx.max(mx.abs(gradient[:, closing + 1])).item(), 0)
 
+    def test_long_replies_keep_a_strong_language_and_format_anchor(self):
+        logits = mx.zeros((1, 35, 16))
+        targets = mx.zeros((1, 35), dtype=mx.int32)
+        reference = nn.log_softmax(mx.zeros((1, 32, 16)).at[:, :, 0].add(1), axis=-1)
+        grad = mx.grad(lambda x: reasoning_loss(x, targets, 2, reference, 1))(logits)
+        self.assertGreater(abs(grad[0, 3, 0].item()), abs(grad[0, 15, 0].item()))
+        reference = nn.log_softmax(logits[:, 3:], axis=-1)
+        grad = mx.grad(lambda x: reasoning_loss(x, targets, 2, reference, 1, answer_weight=1))(logits)
+        self.assertGreater(abs(grad[0, 3, 0].item()), abs(grad[0, 15, 0].item()))
+        self.assertLess(mx.max(mx.abs(grad[:, -1])).item(), 1e-6)
+
     def test_reserved_prompt_gradients_and_fusion_leave_other_rows_unchanged(self):
         model = tiny_flint()
         embedding, _ = adapt_prompt(model, [100, 101], [10, 11])
