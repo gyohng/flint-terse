@@ -1,13 +1,14 @@
 """Cache frozen Flint hidden states for probability-preserving training."""
 
 import argparse
+import json
 from pathlib import Path
 
 import mlx.core as mx
 from mlx_lm import load
 from mlx_lm.models.cache import make_prompt_cache
 
-from corpus import BASE, read_rows, training_tokens
+from corpus import BASE, configure_adapter_tokenizer, read_rows, training_tokens
 from distill import with_examples
 
 
@@ -16,6 +17,7 @@ def main():
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
     p.add_argument("--model", default=BASE)
+    p.add_argument("--adapter", help="Use a frozen learned input prefix as the probability teacher")
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--examples", help="Add thinking demonstrations to cache teacher features")
     p.add_argument("--weight", type=float, default=1, help="Relative loss weight per example")
@@ -42,7 +44,12 @@ def main():
     if args.examples:
         examples = [message for row in read_rows(args.examples) for message in row["messages"]]
         rows = [{**row, "messages": with_examples(row["messages"], examples)} for row in rows]
-    model, tokenizer = load(args.model)
+    if args.adapter:
+        config = json.loads((Path(args.adapter) / "adapter_config.json").read_text())
+        if config.get("lora_parameters", {}).get("keys") != ["model.embed_tokens"]:
+            p.error("Teacher adapters must leave the output head frozen")
+    model, tokenizer = load(args.model, adapter_path=args.adapter)
+    configure_adapter_tokenizer(tokenizer, args.adapter)
     model.eval()
     close = tokenizer.convert_tokens_to_ids("</think>")
     arrays = {k: [] for k in ("hidden", "targets", "thought_weights", "answer_weights", "weights", "valid")}
@@ -96,7 +103,7 @@ def main():
         p.error("Unused teacher features")
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     mx.save_safetensors(args.output, {k: mx.concatenate(v) for k, v in arrays.items()},
-                        metadata={"model": args.model, "examples": args.examples or "", "weight": str(args.weight)})
+                        metadata={"model": args.model, "adapter": args.adapter or "", "examples": args.examples or "", "weight": str(args.weight)})
     print(f"Saved {args.output}")
 
 

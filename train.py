@@ -124,14 +124,15 @@ def relative_weight_change(model):
     return (delta_squared / base_squared) ** 0.5
 
 
-def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1):
+def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0):
     losses = nn.losses.cross_entropy(logits[:, :closing + 1], targets[:, :closing + 1])
     positions = mx.arange(closing + 1)
     weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
     thought = (losses * weights).sum() / weights.sum()
     answer = nn.log_softmax(logits[:, closing + 1:], axis=-1)
     preservation = (mx.exp(reference) * (reference - answer)).sum(axis=-1).mean()
-    return thought + answer_kl * preservation
+    answer_ce = nn.losses.cross_entropy(logits[:, closing + 1:], targets[:, closing + 1:]).mean() if answer_weight else 0
+    return thought + answer_kl * preservation + answer_weight * answer_ce
 
 
 def train_paired(model, tokenizer, args):

@@ -39,10 +39,10 @@ def prefix_cache(model, prompt, cache=None):
     return cache
 
 
-def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1):
+def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1, answer_weight=0):
     hidden = model.model(inputs, cache=copy.deepcopy(cache))[:, prefix_length:]
     logits = model.lm_head(hidden).astype(mx.float32)
-    return reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight)
+    return reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight, answer_weight)
 
 
 def main():
@@ -59,6 +59,7 @@ def main():
     p.add_argument("--strength", dest="prompt_strength", type=float, default=1,
                    help="Blend the saved prefix with its starting weights (0 to 1)")
     p.add_argument("--answer-kl", type=float, default=1)
+    p.add_argument("--answer-weight", type=float, default=0, help="Supervise verified final replies; does not penalize reply length")
     p.add_argument("--start-weight", type=float, default=1, help="Weight the first eight reasoning tokens to teach a direct start")
     p.add_argument("--prompt-role", choices=("system", "developer", "user"), default="system")
     p.add_argument("--max-tokens", type=int, default=16384)
@@ -68,7 +69,7 @@ def main():
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new output")
-    if min(args.steps, args.accumulate, args.learning_rate, args.max_change, args.start_weight) <= 0 or args.answer_kl < 0:
+    if min(args.steps, args.accumulate, args.learning_rate, args.max_change, args.start_weight) <= 0 or min(args.answer_kl, args.answer_weight) < 0:
         p.error("Steps, accumulation, learning rate and max change must be positive; KL nonnegative")
     if not 0 <= args.prompt_strength <= 1:
         p.error("Strength must be between 0 and 1")
@@ -152,7 +153,7 @@ def main():
         mx.eval(reference)
         fn = grad_fn if training else prompt_loss
         result = fn(model, inputs, mx.array([completion]), cache, len(control_ids) + len(suffix) - 1,
-                    closing, reference, args.answer_kl, args.start_weight)
+                    closing, reference, args.answer_kl, args.start_weight, args.answer_weight)
         mx.eval(result)
         return result
 
