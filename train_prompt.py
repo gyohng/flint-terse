@@ -51,12 +51,13 @@ def main():
     p.add_argument("--teacher-features", nargs="+", required=True, help="Original-reasoning features in corpus order")
     p.add_argument("--model", default=BASE)
     p.add_argument("--output", default="adapters/prompt")
+    p.add_argument("--resume", help="Start from a learned prefix, with a fresh optimizer")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--accumulate", type=int, default=4)
     p.add_argument("--learning-rate", type=float, default=.001)
     p.add_argument("--max-change", type=float, default=1)
     p.add_argument("--strength", dest="prompt_strength", type=float, default=1,
-                   help="Blend the saved prefix with its initialization (0 to 1)")
+                   help="Blend the saved prefix with its starting weights (0 to 1)")
     p.add_argument("--answer-kl", type=float, default=1)
     p.add_argument("--start-weight", type=float, default=1, help="Weight the first eight reasoning tokens to teach a direct start")
     p.add_argument("--prompt-role", choices=("system", "developer", "user"), default="system")
@@ -86,6 +87,14 @@ def main():
         p.error("Initialization must fit in the available reserved tokens")
     selected = reserved[-len(initial_ids):]
     token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
+    resumed = None
+    if args.resume:
+        previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
+        expected = {"model": args.model, "prompt_role": args.prompt_role,
+                    "init_text": args.init_text, "prompt_tokens": token_names}
+        if any(previous.get(k) != v for k, v in expected.items()):
+            p.error("Resumed prefix must use the same model, role, initialization and reserved tokens")
+        resumed = mx.load(str(Path(args.resume) / "adapters.safetensors"))
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
     user = tokenizer.convert_tokens_to_ids("<|user|>")
     control_ids = ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids
@@ -113,6 +122,10 @@ def main():
         p.error("Need aligned teacher features and nonempty train/validation splits")
     mx.random.seed(args.seed)
     embedding, initial = adapt_prompt(model, token_ids, initial_ids)
+    if resumed is not None:
+        if not bool((resumed["model.embed_tokens.lora_a"] == embedding.lora_a).all()):
+            p.error("Resumed adapter modifies unexpected embedding rows")
+        embedding.lora_b = resumed["model.embed_tokens.lora_b"]
     initial_b = embedding.lora_b
     radius = args.max_change * mx.linalg.norm(initial, axis=-1, keepdims=True)
     model.train()
