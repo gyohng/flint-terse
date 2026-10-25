@@ -52,6 +52,7 @@ def main():
     p.add_argument("--model", default=BASE)
     p.add_argument("--output", default="adapters/prompt")
     p.add_argument("--resume", help="Start from a learned prefix, with a fresh optimizer")
+    p.add_argument("--checkpoint", choices=("best", "last"), default="best", help="Select by validation loss or a fixed update count")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--accumulate", type=int, default=4)
     p.add_argument("--learning-rate", type=float, default=.001)
@@ -163,7 +164,7 @@ def main():
         if step % 25 == 0 or step == args.steps:
             validation = sum(example(row, False).item() * row[-1] for row in records["valid"]) / sum(r[-1] for r in records["valid"])
             print(f"Step {step}: validation={validation:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
-            if validation < best:
+            if validation < best or args.checkpoint == "last":
                 best, best_b, best_step = validation, embedding.lora_b, step
         if step == args.steps:
             break
