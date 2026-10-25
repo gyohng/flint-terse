@@ -68,8 +68,8 @@ PY
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
-./run.sh cache-features data/corpus-paired.jsonl --original-reasoning --max-tokens 16384 --output runs/native-features.safetensors
-./run.sh train-prompt data/corpus-paired.jsonl --teacher-features runs/native-features.safetensors --init-text 'No prompt recaps.' --prompt-role system --answer-kl 8 --start-weight 3 --strength .95 --output adapters/terse
+# README.md contains the complete teacher and attention-training recipe.
+./run.sh train --help
 ./run.sh capture data/direct-eval.jsonl --adapter adapters/terse --output runs/direct-check.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --adapter adapters/terse --output runs/terse.jsonl
