@@ -57,6 +57,8 @@ def main():
     p.add_argument("--accumulate", type=int, default=4)
     p.add_argument("--learning-rate", type=float, default=.001)
     p.add_argument("--max-change", type=float, default=1)
+    p.add_argument("--strength", dest="prompt_strength", type=float, default=1,
+                   help="Blend the saved prefix with its initialization (0 to 1)")
     p.add_argument("--answer-kl", type=float, default=1)
     p.add_argument("--max-tokens", type=int, default=16384)
     p.add_argument("--init-text", default="Think in brief working notes and equations. Preserve necessary checks. Answer the user normally.")
@@ -67,6 +69,8 @@ def main():
         p.error(f"{output} exists; choose a new output")
     if min(args.steps, args.accumulate, args.learning_rate, args.max_change) <= 0 or args.answer_kl < 0:
         p.error("Steps, accumulation, learning rate and max change must be positive; KL nonnegative")
+    if not 0 <= args.prompt_strength <= 1:
+        p.error("Strength must be between 0 and 1")
     features = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in features):
         p.error("Teacher features must come from the same frozen model")
@@ -152,9 +156,10 @@ def main():
               "lora_parameters": {"rank": len(token_ids), "scale": 1.0, "dropout": 0.0, "keys": ["model.embed_tokens"]}}
     (output / "adapter_config.json").write_text(json.dumps(config, indent=2) + "\n")
     mx.save_safetensors(str(output / "adapters.safetensors"), {
-        "model.embed_tokens.lora_a": embedding.lora_a, "model.embed_tokens.lora_b": best_b,
+        "model.embed_tokens.lora_a": embedding.lora_a,
+        "model.embed_tokens.lora_b": initial_b + args.prompt_strength * (best_b - initial_b),
     })
-    print(f"Saved step {best_step} to {output}; {len(token_ids)} learned input tokens; evaluate before exporting")
+    print(f"Saved step {best_step} to {output}; {len(token_ids)} input tokens, strength={args.prompt_strength}; evaluate before exporting")
 
 
 if __name__ == "__main__":
