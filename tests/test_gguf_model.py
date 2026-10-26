@@ -36,6 +36,16 @@ class GGUFTests(unittest.TestCase):
                 actual_grad = mx.grad(lambda v: layer(v).sum())(x)
                 expected_grad = mx.grad(lambda v: (v @ expected.T).sum())(x)
                 np.testing.assert_allclose(np.array(actual_grad), np.array(expected_grad), rtol=2e-5, atol=2e-5)
+                tensor.shape = np.array([256, 4, 2])
+                experts = GGUFLinear(tensor)
+                indices = mx.array([1, 0])
+                inputs = x[:, None, :]
+                dense = expected.reshape(2, 4, 256).swapaxes(-1, -2)
+                reference = lambda v: mx.gather_mm(v, dense, rhs_indices=indices)
+                np.testing.assert_allclose(np.array(experts(inputs, indices)), np.array(reference(inputs)), rtol=2e-5, atol=2e-5)
+                actual_grad = mx.grad(lambda v: experts(v, indices).sum())(inputs)
+                expected_grad = mx.grad(lambda v: reference(v).sum())(inputs)
+                np.testing.assert_allclose(np.array(actual_grad), np.array(expected_grad), rtol=2e-5, atol=2e-5)
 
 
 if __name__ == '__main__':

@@ -5,13 +5,14 @@ import { LMStudioClient } from './.tools/lms-sdk/node_modules/@lmstudio/sdk/dist
 
 const { values } = parseArgs({ options: {
   model: { type: 'string', default: 'recursivesi/flint@q4_k_m' },
-  adapter: { type: 'string', default: 'adapters/opening-pruned' },
-  identifier: { type: 'string', default: 'flint-terse-original-q4' },
+  adapter: { type: 'string', default: 'release/flint-terse' },
+  identifier: { type: 'string', default: 'flint-terse' },
   context: { type: 'string', default: '65536' },
+  base: { type: 'boolean', default: false },
 } });
 const adapter = resolve(values.adapter, 'adapter.gguf');
 const template = resolve(values.adapter, 'chat_template.jinja');
-await access(adapter);
+if (!values.base) await access(adapter);
 await access(template);
 
 const client = new LMStudioClient();
@@ -25,7 +26,7 @@ try {
         enabled: true, excludeAllConfig: false,
         disabledParameters: ['--chat-template-file'],
         overrideParameters: [
-          { key: '--lora', value: adapter },
+          ...values.base ? [] : [{ key: '--lora', value: adapter }],
           { key: '--chat-template-file', value: template },
         ],
       },

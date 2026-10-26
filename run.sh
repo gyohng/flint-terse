@@ -85,6 +85,12 @@ PY
     shift
     node load_lmstudio.mjs "$@"
     ;;
+  finetune)
+    shift
+    [[ -x .venv/bin/python ]] || ./run.sh setup
+    [[ -d .tools/lms-sdk/node_modules/@lmstudio/sdk ]] || ./run.sh setup-lmstudio
+    .venv/bin/python finetune.py "$@"
+    ;;
   test)
     .venv/bin/python -m unittest discover -s tests -v
     ;;

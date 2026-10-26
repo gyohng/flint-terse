@@ -38,7 +38,10 @@ def main():
     exported = {t.name: t.data for t in gguf.GGUFReader(output).tensors}
     assert exported["token_embd.weight.lora_a"].tobytes() == a.tobytes()
     assert exported["token_embd.weight.lora_b"].T.tobytes() == b.tobytes()
-    template = (args.model / "chat_template.jinja").read_text()
+    if args.model.suffix.lower() == '.gguf':
+        template = gguf.GGUFReader(args.model).fields['tokenizer.chat_template'].contents()
+    else:
+        template = (args.model / "chat_template.jinja").read_text()
     override = args.adapter / "chat_template.jinja"
     override.write_text(template.replace(r' | replace("\x00", "")', ""))
     print(f"FP32 adapter: {output} ({output.stat().st_size:,} bytes)")
