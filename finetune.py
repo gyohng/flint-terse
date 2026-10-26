@@ -15,6 +15,16 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
+def lmstudio_key(model):
+    listing = json.loads(subprocess.check_output(['lms', 'ls', '--variants', '--json']))
+    for entry in listing:
+        for variant in entry.get('variants', [entry]):
+            path = str(variant.get('indexedModelIdentifier', '')).split('@')[-1]
+            if (Path.home() / '.lmstudio/models' / path).resolve() == model.resolve():
+                return variant['modelKey']
+    return None
+
+
 def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('model', nargs='?', default=DEFAULT_MODEL, help='Local GGUF or owner/repository:filename.gguf')
@@ -23,12 +33,13 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
+    p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
-    if args.output.exists():
+    if args.output.exists() and not args.evaluate_only:
         p.error(f'{args.output} exists; choose a new --output')
     for label in ('base', 'terse'):
         for dataset in args.eval:
@@ -36,45 +47,48 @@ def main(argv=None, loaded=None):
                 p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
-    from gguf import GGUFReader
-    reader = GGUFReader(model)
-    if reader.fields['general.architecture'].contents() != 'flint':
-        p.error('This training recipe supports Flint checkpoints only')
-    del reader
-    Path('runs').mkdir(exist_ok=True)
-    import cache_features
-    import train_prompt
-    from gguf_model import load_model
-    import mlx.core as mx
-    if loaded is None:
-        loaded = load_model(str(model))
-    with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
-        features = Path(tmp) / 'features.safetensors'
-        cache_features.main([*args.data, '--model', str(model), '--original-reasoning',
-            '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
-        train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
-            '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
-            '--steps', str(args.steps), '--max-tokens', '16384', '--output', str(args.output)], loaded=loaded)
-    del loaded
-    gc.collect()
-    mx.clear_cache()
-    config_file = args.output / 'adapter_config.json'
-    config = json.loads(config_file.read_text())
-    config['base_model'] = source
-    config_file.write_text(json.dumps(config, indent=2) + '\n')
-    run(sys.executable, 'export_adapter.py', '--adapter', args.output, '--model', model)
+    if args.evaluate_only:
+        config = json.loads((args.output / 'adapter_config.json').read_text())
+        if config['base_model']['sha256'] != source['sha256']:
+            p.error('The adapter was trained against a different GGUF')
+    else:
+        from gguf import GGUFReader
+        reader = GGUFReader(model)
+        if reader.fields['general.architecture'].contents() != 'flint':
+            p.error('This training recipe supports Flint checkpoints only')
+        del reader
+        Path('runs').mkdir(exist_ok=True)
+        import cache_features
+        import train_prompt
+        from gguf_model import load_model
+        import mlx.core as mx
+        if loaded is None:
+            loaded = load_model(str(model))
+        with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
+            features = Path(tmp) / 'features.safetensors'
+            cache_features.main([*args.data, '--model', str(model), '--original-reasoning',
+                '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
+            train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
+                '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                '--steps', str(args.steps), '--max-tokens', '16384', '--output', str(args.output)], loaded=loaded)
+        del loaded
+        gc.collect()
+        mx.clear_cache()
+        config_file = args.output / 'adapter_config.json'
+        config = json.loads(config_file.read_text())
+        config['base_model'] = source
+        config_file.write_text(json.dumps(config, indent=2) + '\n')
+        run(sys.executable, 'export_adapter.py', '--adapter', args.output, '--model', model)
     if sha256(model) != source['sha256']:
         raise RuntimeError('Base GGUF changed during training')
 
     # Symlink into the library if this exact file is not already indexed there.
-    listing = json.loads(subprocess.check_output(['lms', 'ls', '--variants', '--json']))
-    matches = [m for m in listing if (Path.home() / '.lmstudio/models' /
-        str(m.get('indexedModelIdentifier', '')).split('@')[-1]).resolve() == model.resolve()]
-    if matches:
-        key = matches[0]['modelKey']
-    else:
+    key = lmstudio_key(model)
+    if key is None:
         run('lms', 'import', model, '--symbolic-link', '--user-repo', 'local/flint-terse-base', '--yes')
-        key = f'local/flint-terse-base/{model.name}'
+        key = lmstudio_key(model)
+        if key is None:
+            raise RuntimeError('Imported GGUF is not indexed by LM Studio yet; retry with --evaluate-only')
     results = {}
     for label in ('base', 'terse'):
         identifier = 'flint-base-eval' if label == 'base' else 'flint-terse'
