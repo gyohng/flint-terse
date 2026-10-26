@@ -23,7 +23,12 @@ def main():
     args = p.parse_args()
     args.api_chat = True
     context = json.loads(Path(args.context).read_text())
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    if Path(args.tokenizer).suffix.lower() == '.gguf':
+        from gguf import GGUFReader
+        from gguf_model import tokenizer_from_gguf
+        tokenizer = tokenizer_from_gguf(GGUFReader(args.tokenizer))
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     episodes = read_rows(args.input)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
