@@ -273,7 +273,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--final-eval", action="store_true", help="Create 100 further math/code tasks, disjoint from the initial sets")
     p.add_argument("--expand", metavar="OUTPUT", help="Collect new math/code and SmolTalk prompts for native-trace training")
+    p.add_argument("--fresh-eval", metavar="OUTPUT", help="Reserve 60 math and 40 code tasks absent from data and prior captures")
     args = p.parse_args()
+    if args.fresh_eval and Path(args.fresh_eval).exists():
+        p.error(f"{args.fresh_eval} already exists")
     sources = Path("data/sources")
     sources.mkdir(exist_ok=True)
     urls = {
@@ -285,6 +288,34 @@ def main():
         if not (sources / name).exists():
             with urllib.request.urlopen(url, timeout=60) as response:
                 (sources / name).write_bytes(response.read())
+    if args.fresh_eval:
+        seen_ids, seen_prompts = set(), set()
+        def prompt_key(row):
+            return json.dumps(row.get("messages"), sort_keys=True)
+        for path in [*Path("data").glob("*.jsonl"), *Path("runs").glob("*.jsonl")]:
+            for row in read_rows(path):
+                seen_ids.add(row.get("id"))
+                if row.get("messages"):
+                    seen_prompts.add(prompt_key(row))
+        code, code_test = code_rows(10000)
+        selected = []
+        for candidates, count in [(math_rows("data/sources/gsm8k-test.jsonl", 2000, "test"), 60),
+                                  (code + code_test, 40)]:
+            fresh = []
+            for row in candidates:
+                key = prompt_key(row)
+                if row["id"] not in seen_ids and key not in seen_prompts:
+                    fresh.append({**row, "split": "test"})
+                    seen_ids.add(row["id"])
+                    seen_prompts.add(key)
+                    if len(fresh) == count:
+                        break
+            if len(fresh) < count:
+                p.error(f"Only {len(fresh)} unused {candidates[0]['family']} tasks remain; need {count}")
+            selected.extend(fresh)
+        write_rows(args.fresh_eval, selected)
+        print(f"Reserved {len(selected)} fresh evaluation tasks in {args.fresh_eval}")
+        return
     if args.expand:
         expand_corpus(args.expand)
         return

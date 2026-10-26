@@ -219,7 +219,7 @@ For MLX adapters and OpenClaw checks:
 ./run.sh replay data/openclaw-episodes.jsonl --model flint-terse --temperature 1 --output runs/episodes-terse.jsonl
 ```
 
-The 159-task holdout, 100-task final set, 50-task fresh set and now the release sets have all been inspected. Future tuning needs a fresh evaluation set. `--samples` greater than one is for corpus selection only. Use `compare --cross-runtime` for deployment comparisons with different model identifiers or quantization.
+The earlier holdout, final, fresh and release sets have all been inspected and must be treated as development evaluations. `data/confirmation-eval.jsonl` reserves another 60 math and 40 code tasks, with IDs and prompts absent from all existing corpus files and captures. Reference arithmetic and code tests were checked; no candidate has been evaluated on this set yet. Use it to confirm the selected candidate, not to select repeated training changes. `./run.sh build-corpus --fresh-eval OUTPUT` creates a disjoint set from the remaining reference-checked source tasks and fails if too few remain. `--samples` greater than one is for corpus selection only. Use `compare --cross-runtime` for deployment comparisons with different model identifiers or quantization.
 
 `openclaw sync` reads the authorized remote system instructions and exec/process schemas over SSH. Episode replay feeds actual model responses back into the conversation with fixed tool observations. Generated tool calls are checked without execution.
 
