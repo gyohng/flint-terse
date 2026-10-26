@@ -56,6 +56,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
+    p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
+    p.add_argument('--learning-rate', type=float, default=.001)
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
@@ -100,7 +102,9 @@ def main(argv=None, loaded=None):
             train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
                 '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
                 '--steps', str(args.steps), '--max-change', str(args.max_change),
-                '--max-tokens', '16384', '--output', str(args.output)], loaded=loaded)
+                '--learning-rate', str(args.learning_rate),
+                '--max-tokens', '16384', '--output', str(args.output),
+                *(['--initial-adapter', args.initial_adapter] if args.initial_adapter else [])], loaded=loaded)
         del loaded
         gc.collect()
         mx.clear_cache()
@@ -122,7 +126,7 @@ def main(argv=None, loaded=None):
     if args.baseline:
         print(f'Reusing baseline: {args.baseline}', flush=True)
     for label in (('terse',) if args.baseline else ('base', 'terse')):
-        identifier = 'flint-base-eval' if label == 'base' else 'flint-terse'
+        identifier = 'flint-base-eval' if label == 'base' else 'flint-terse-eval'
         command = ['node', 'load_lmstudio.mjs', '--model', key, '--adapter', args.output,
                    '--identifier', identifier, '--context', args.context]
         run(*command, *(['--base'] if label == 'base' else []))
@@ -152,8 +156,14 @@ def main(argv=None, loaded=None):
         raise SystemExit('Quality regression detected. The adapter is experimental; inspect the saved answers.')
     if sum(r['complete'] for r in terse) < sum(r['complete'] for r in base):
         raise SystemExit('Completion regression detected. Inspect the saved answers.')
-    if not paired or after >= before:
-        raise SystemExit('No thinking reduction on shared correct answers. Inspect the saved traces.')
+    prose = [(b, t) for b, t in zip(base, terse) if b['correct'] is None]
+    if sum(t['complete'] for _, t in prose) < sum(b['complete'] for b, _ in prose):
+        raise SystemExit('Ordinary-reply completion regression detected. Inspect the saved answers.')
+    if not paired or after > before * .35:
+        raise SystemExit('Thinking reduction is below 65%. This is not a terse release; inspect the traces.')
+    run('lms', 'unload', 'flint-terse-eval')
+    run('node', 'load_lmstudio.mjs', '--model', key, '--adapter', args.output,
+        '--identifier', 'flint-terse', '--context', args.context)
     print(f'Adapter saved in {args.output}; loaded in LM Studio as flint-terse. '
           'Review the prose captures too; these checks do not establish unchanged quality on every task.')
 

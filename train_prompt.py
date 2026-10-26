@@ -51,7 +51,9 @@ def main(argv=None, loaded=None):
     p.add_argument("--teacher-features", nargs="+", required=True, help="Original-reasoning features in corpus order")
     p.add_argument("--model", default=BASE)
     p.add_argument("--output", default="adapters/prompt")
-    p.add_argument("--resume", help="Start from a learned prefix, with a fresh optimizer")
+    start = p.add_mutually_exclusive_group()
+    start.add_argument("--resume", help="Start from a learned prefix on the same base, with a fresh optimizer")
+    start.add_argument("--initial-adapter", help="Initialize native thinking-token weights from another checkpoint")
     p.add_argument("--checkpoint", choices=("best", "last"), default="best", help="Select by validation loss or a fixed update count")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--accumulate", type=int, default=4)
@@ -71,6 +73,8 @@ def main(argv=None, loaded=None):
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args(argv)
     args.think_tokens = args.think_tokens or args.think_opening
+    if args.initial_adapter and not args.think_tokens:
+        p.error('--initial-adapter requires native thinking-token training')
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new output")
@@ -99,16 +103,21 @@ def main(argv=None, loaded=None):
         selected = reserved[-len(initial_ids):]
         token_ids, token_names = [i for i, _ in selected], [t for _, t in selected]
     resumed = None
-    if args.resume:
-        previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
+    starting_adapter = args.resume or args.initial_adapter
+    if starting_adapter:
+        previous = json.loads((Path(starting_adapter) / "adapter_config.json").read_text())
         if args.think_tokens and previous.get("think_opening", False) != args.think_opening:
             p.error("Resumed adapter must tune the same thinking boundaries")
         expected = {"model": args.model, "think_tokens": True} if args.think_tokens else {
             "model": args.model, "prompt_role": args.prompt_role,
             "init_text": args.init_text, "prompt_tokens": token_names}
+        if args.initial_adapter:
+            expected.pop('model')
+        if previous['lora_parameters']['scale'] != 1:
+            p.error('Starting embedding adapter must use scale 1')
         if any(previous.get(k) != v for k, v in expected.items()):
             p.error("Resumed prefix must use the same model, role, initialization and reserved tokens")
-        resumed = mx.load(str(Path(args.resume) / "adapters.safetensors"))
+        resumed = mx.load(str(Path(starting_adapter) / "adapters.safetensors"))
     opening, close, assistant = [tokenizer.convert_tokens_to_ids(t) for t in ("<think>", "</think>", "<|assistant|>")]
     user = tokenizer.convert_tokens_to_ids("<|user|>")
     control_ids = [] if args.think_tokens else (
@@ -139,6 +148,13 @@ def main(argv=None, loaded=None):
     mx.random.seed(args.seed)
     embedding, initial = adapt_prompt(model, token_ids, initial_ids)
     if resumed is not None:
+        expected_weights = {'model.embed_tokens.lora_a': embedding.lora_a,
+                            'model.embed_tokens.lora_b': embedding.lora_b}
+        if set(resumed) != set(expected_weights) or any(
+            resumed[k].shape != v.shape or resumed[k].dtype != mx.float32
+            for k, v in expected_weights.items()
+        ):
+            p.error('Starting adapter must contain matching FP32 embedding tensors')
         if not bool((resumed["model.embed_tokens.lora_a"] == embedding.lora_a).all()):
             p.error("Resumed adapter modifies unexpected embedding rows")
         embedding.lora_b = resumed["model.embed_tokens.lora_b"]

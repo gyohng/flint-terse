@@ -24,6 +24,10 @@ try {
       model.indexedModelIdentifier?.endsWith(`/${config.base_model.filename}`))?.modelKey;
     if (!modelKey) throw new Error(`Import ${config.base_model.filename} into LM Studio first, or specify --model.`);
   }
+  const loaded = await client.llm.listLoaded();
+  if (loaded.some(model => model.identifier === values.identifier)) {
+    await client.llm.unload(values.identifier);
+  }
   const model = await client.llm.load(modelKey, {
     identifier: values.identifier,
     config: {
