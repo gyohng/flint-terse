@@ -11,7 +11,7 @@ from gguf_model import GGUFLinear, repack
 class GGUFTests(unittest.TestCase):
     def test_exact_coefficients_and_input_gradients(self):
         rng = np.random.default_rng(42)
-        for kind in (gguf.GGMLQuantizationType.Q4_K, gguf.GGMLQuantizationType.Q6_K,
+        for kind in (gguf.GGMLQuantizationType.Q4_1, gguf.GGMLQuantizationType.Q4_K, gguf.GGMLQuantizationType.Q6_K,
                      gguf.GGMLQuantizationType.Q8_0):
             with self.subTest(kind=kind.name):
                 block_size, block_bytes = gguf.GGML_QUANT_SIZES[kind]
@@ -21,7 +21,7 @@ class GGUFTests(unittest.TestCase):
                     data[:, -2:] = scale
                 else:
                     data[:, :2] = scale
-                    if kind == gguf.GGMLQuantizationType.Q4_K:
+                    if kind in (gguf.GGMLQuantizationType.Q4_K, gguf.GGMLQuantizationType.Q4_1):
                         data[:, 2:4] = scale
                 tensor = SimpleNamespace(name='fixture', shape=np.array([256, 8]), tensor_type=kind, data=data)
                 (w, s, b), bits, padded = repack(tensor)

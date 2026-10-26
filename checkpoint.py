@@ -5,9 +5,9 @@ from pathlib import Path
 
 from huggingface_hub import HfApi, hf_hub_download
 
-DEFAULT_MODEL = 'lmstudio-community/flint-GGUF:flint-Q4_K_M.gguf'
-DEFAULT_REVISION = 'a14b4396552988f5bf1427c2ab23f3ade4b683a8'
-DEFAULT_SHA256 = '20c89707f762af73f0840f7b2c2911193617e60cac2ae30a96cb2cda7c15927e'
+DEFAULT_MODEL = 'RecursiveSI/flint-int4-gguf:flint-int4-q4_1.gguf'
+DEFAULT_REVISION = '9c47151036bc2c34331142dda04488bceab2bc9f'
+DEFAULT_SHA256 = '43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b'
 
 
 def sha256(path):

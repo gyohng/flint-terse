@@ -16,6 +16,11 @@ from transformers import PreTrainedTokenizerFast
 def unpack(blocks, kind):
     """Return unsigned codes and exact FP32 affine scales/biases per group."""
     n = len(blocks)
+    if kind == gguf.GGMLQuantizationType.Q4_1:
+        s = blocks[:, :2].copy().view(np.float16).astype(np.float32)
+        b = blocks[:, 2:4].copy().view(np.float16).astype(np.float32)
+        q = blocks[:, 4:, None] >> np.array([0, 4], np.uint8)
+        return (q & 15).transpose(0, 2, 1).reshape(n, 32), s, b, 4, 32
     if kind == gguf.GGMLQuantizationType.Q4_K:
         d = blocks[:, :2].copy().view(np.float16).astype(np.float32)
         dm = blocks[:, 2:4].copy().view(np.float16).astype(np.float32)
@@ -40,7 +45,7 @@ def repack(tensor):
     block_size, block_bytes = gguf.GGML_QUANT_SIZES[tensor.tensor_type]
     blocks = tensor.data.reshape(-1, block_bytes)
     padded = tensor.tensor_type == gguf.GGMLQuantizationType.Q6_K
-    bits = 4 if tensor.tensor_type == gguf.GGMLQuantizationType.Q4_K else 8
+    bits = 4 if tensor.tensor_type in (gguf.GGMLQuantizationType.Q4_K, gguf.GGMLQuantizationType.Q4_1) else 8
     width = shape[-1] * (2 if padded else 1)
     weights = np.empty((int(np.prod(shape[:-1])), width * bits // 32), np.uint32)
     scales = np.empty((weights.shape[0], width // 32), np.float32)

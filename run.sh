@@ -96,7 +96,7 @@ PY
     ;;
   *)
     cat <<'EOF'
-./run.sh finetune # Find/download the original Q4 GGUF, train, evaluate, load flint-terse
+./run.sh finetune # Find/download the official INT4 GGUF, train, evaluate, load flint-terse
 ./run.sh finetune /path/to/flint.gguf --output release/my-flint-terse
 ./run.sh setup
 ./run.sh setup-gguf
@@ -104,7 +104,7 @@ PY
 ./run.sh serve # Original MLX weights + separate adapter; API model: default_model
 ./run.sh export-adapter # FP32 GGUF adapter + Jinja override; no base conversion
 ./run.sh setup-lmstudio
-./run.sh load-lmstudio # Original downloaded Q4 GGUF + separate FP32 adapter
+./run.sh load-lmstudio # Official INT4 GGUF + separate FP32 adapter
 # README.md contains the opening-only training recipe and attention alternatives.
 ./run.sh train-prompt --help
 ./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-pruned --output runs/direct-check.jsonl
