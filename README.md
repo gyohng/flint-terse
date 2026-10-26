@@ -2,7 +2,7 @@
 
 Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. Train small adapters without adding text to the prompt.
 
-Q4_K_M and Q8_0 versions of `flint-terse-direct-experimental` are installed in LM Studio. The Q4 version is loaded at 64K context with API identifier `flint-terse`. Both use `adapters/opening-pruned` and retain Flint's original chat template, so they add no instruction to the user message. The older `flint-terse-prompt-half` appended the learned 17-token “Think in brief working notes…” instruction and remains a separate, unloaded model.
+Q4_K_M and Q8_0 versions of `flint-terse-direct-experimental` are installed in LM Studio. Both use `adapters/opening-pruned` and retain Flint's original chat template, so they add no instruction to the user message. Training used the MLX INT4 checkpoint; Q8 is an export format, not the training source. The older `flint-terse-prompt-half` appended the learned 17-token “Think in brief working notes…” instruction and remains a separate model.
 
 ## Current result
 
@@ -39,7 +39,11 @@ LM Studio's memory estimates with full GPU offload, one prediction slot and no s
 | 65,536 tokens | 26.94 GiB | 44.23 GiB |
 | 131,072 tokens | 30.26 GiB | 47.56 GiB |
 
-These are model/runtime estimates, not measured peak usage or guarantees of long-context answer quality. Leave room for macOS and other apps. Q4 testing at 64K context completed all 16 short conversational prompts and passed the four interval-merging assertions. It passed 4/6 tool episodes: one added an extra file check, another wrapped required JSON in Markdown. Ordinary-prompt thinking totaled 2,585 tokens versus Q8's 859, mostly due to one long lists explanation. Percentage explanations and reply-length constraints still failed review. Captures are `runs/direct-q4-{ordinary,chat,episodes}.jsonl`; the 100-task accuracy benchmark has not been rerun on Q4.
+These are model/runtime estimates, not measured peak usage or guarantees of long-context answer quality. Leave room for macOS and other apps. Q4 testing at 64K context completed all 16 short conversational prompts and passed the four interval-merging assertions. Ordinary-prompt thinking totaled 2,585 tokens versus Q8's 859, mostly due to one long lists explanation. Percentage explanations and reply-length constraints still failed review. Captures are `runs/direct-q4-{ordinary,chat,episodes}.jsonl`.
+
+A matched LM Studio comparison of the exported GGUFs on the same 100 tasks scored **Q8 84/100, Q4 82/100**: math 50→47/60, code 34→35/40. Both used 64K context, one prediction slot, no speculative draft, temperature 1, top-p .95, top-k 20, seed 42 per request and a 4,096-token output budget. Q4 used 39,711 thinking tokens versus Q8's 30,096 (+31.9%); on the 78 tasks both answered correctly, it used 9.5% more. Six Q8 successes became failures and four failures became successes. Scores include strict formatting checks. This single run shows a close score, not equivalent behavior.
+
+Matched 64K OpenClaw replay remained **Q8 5/6, Q4 4/6**. Q8 unnecessarily reran finished tests; Q4 added an extra file check and wrapped required JSON in Markdown. Captures are `runs/release-gguf-{q8,q4}.jsonl` and `runs/release-gguf-{q8,q4}-episodes.jsonl`. These GGUF results are separate from the MLX comparison above, despite the coincidentally identical aggregate scores.
 
 ## How it works
 
@@ -158,6 +162,19 @@ The preference builder regrades complete responses, ignores numeric formatting-o
 For OpenClaw tasks, run `./run.sh openclaw sync`, then `./run.sh openclaw condition data/tool-prompts.jsonl --output runs/tool-prompts.jsonl` before collecting responses.
 
 ## Evaluate
+
+To compare the installed GGUF variants under the same settings:
+
+```sh
+for quant in q8_0 q4_k_m; do
+  lms load "flint-terse-direct-experimental@$quant" --identifier "flint-$quant-eval" --context-length 65536 --parallel 1 --gpu max --no-speculative-draft-mtp -y
+  ./run.sh capture data/release-eval.jsonl --api http://localhost:1234/v1 --api-chat --model "flint-$quant-eval" --temperature 1 --seed 42 --max-tokens 4096 --output "runs/gguf-$quant-new.jsonl"
+  lms unload "flint-$quant-eval"
+done
+./run.sh compare runs/gguf-q8_0-new.jsonl runs/gguf-q4_k_m-new.jsonl --cross-runtime
+```
+
+For MLX adapters and OpenClaw checks:
 
 ```sh
 ./run.sh batch-capture data/holdout.jsonl --batch-size 8 --max-tokens 4096 --independent-seeds --output runs/base.jsonl
