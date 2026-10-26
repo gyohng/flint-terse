@@ -17,19 +17,25 @@ from corpus import BASE, configure_adapter_tokenizer
 
 
 CONVERT_GGUF = """
-import json, sys
+import json, re, sys
 sys.path.insert(0, sys.argv.pop(1))
 preserve = set(json.loads(sys.argv.pop(1)))
+type_file = sys.argv.pop(1)
+preserved_names = set()
 import convert_hf_to_gguf as converter
 from conversion.flint import FlintModel
 import gguf
 original = FlintModel.tensor_force_quant
 def tensor_type(self, name, new_name, bid, n_dims):
     if name in preserve:
+        preserved_names.add(new_name)
         return gguf.GGMLQuantizationType.F16
     return original(self, name, new_name, bid, n_dims)
 FlintModel.tensor_force_quant = tensor_type
 converter.main()
+with open(type_file, "w") as f:
+    for name in sorted(preserved_names):
+        print("^" + re.escape(name) + "$=f16", file=f)
 """
 
 
@@ -107,7 +113,7 @@ def main():
     p.add_argument("--model", default=BASE)
     p.add_argument("--adapter", default="adapters/terse")
     p.add_argument("--format", choices=("gguf", "mlx"), default="gguf")
-    p.add_argument("--outtype", choices=("q8_0", "f16"), default="q8_0")
+    p.add_argument("--outtype", choices=("q4_k_m", "q8_0", "f16"), default="q8_0")
     p.add_argument("--output")
     p.add_argument("--install", action="store_true", help="Symlink the model into LM Studio's library")
     args = p.parse_args()
@@ -117,11 +123,14 @@ def main():
         p.error(f"{output} exists; choose a new --output")
     converter = Path(".tools/llama.cpp/convert_hf_to_gguf.py").resolve()
     converter_python = Path(".tools/gguf-venv/bin/python").absolute()
+    quantizer = converter.parent / "build/bin/llama-quantize"
     if args.format == "gguf":
         if output.suffix != ".gguf":
             p.error("GGUF output must end in .gguf")
         if not converter.exists() or not converter_python.exists():
             p.error("Run ./run.sh setup-gguf first")
+        if args.outtype == "q4_k_m" and not quantizer.exists():
+            p.error("Run ./run.sh setup-gguf to build llama-quantize first")
     model, tokenizer, config = load(args.model, adapter_path=args.adapter, return_config=True)
     template = configure_adapter_tokenizer(tokenizer, args.adapter)
     # Only adapted modules become BF16/FP16. Experts stay INT4.
@@ -142,19 +151,27 @@ def main():
         # HF and converter scratch files are temporary, not extra model copies to retain.
         with tempfile.TemporaryDirectory(prefix=".flint-gguf-", dir=output.parent) as tmp:
             tmp = Path(tmp)
+            convert_type = "f16" if args.outtype == "q4_k_m" else args.outtype
+            converted = tmp / ("f16.gguf" if args.outtype == "q4_k_m" else output.name)
+            tensor_types = tmp / "preserve-f16.txt"
             write_hf(model, config, args.model, tmp / "hf", template=template)
             del model, fused
             gc.collect()
             mx.clear_cache()
             subprocess.run([
                 str(converter_python), str(converter), str(tmp / "hf"),
-                "--vocab-only", "--outfile", str(tmp / "vocab.gguf"), "--outtype", args.outtype,
+                "--vocab-only", "--outfile", str(tmp / "vocab.gguf"), "--outtype", convert_type,
             ], check=True)
             subprocess.run([
-                str(converter_python), "-c", CONVERT_GGUF, str(converter.parent), preserve, str(tmp / "hf"),
-                "--outfile", str(tmp / output.name), "--model-name", output.stem,
-                "--outtype", args.outtype, "--use-temp-file",
+                str(converter_python), "-c", CONVERT_GGUF, str(converter.parent), preserve,
+                str(tensor_types), str(tmp / "hf"), "--outfile", str(converted),
+                "--model-name", output.stem, "--outtype", convert_type, "--use-temp-file",
             ], check=True)
+            if args.outtype == "q4_k_m":
+                subprocess.run([
+                    str(quantizer), "--tensor-type-file", str(tensor_types),
+                    str(converted), str(tmp / output.name), "Q4_K_M",
+                ], check=True)
             (tmp / output.name).rename(output)
     print(f"Exported model: {output}")
     if args.install:

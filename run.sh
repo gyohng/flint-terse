@@ -14,6 +14,9 @@ case "${1:-help}" in
     git -C .tools/llama.cpp checkout --detach FETCH_HEAD
     uv venv --python 3.13 .tools/gguf-venv
     uv pip install --python .tools/gguf-venv/bin/python -r .tools/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+    cmake -S .tools/llama.cpp -B .tools/llama.cpp/build -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_METAL=OFF
+    cmake --build .tools/llama.cpp/build --target llama-quantize -j 8
     ;;
   download)
     .venv/bin/python - <<'PY'
