@@ -2,7 +2,7 @@
 
 Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. Train small adapters without adding text to the prompt.
 
-`flint-terse-direct-experimental-Q8_0` is installed in LM Studio. Its adapter is `adapters/opening-pruned`; its API identifier when loaded is `flint-terse`. The GGUF retains Flint's original chat template, so it adds no instruction to the user message. The older `flint-terse-prompt-half` appended the learned 17-token “Think in brief working notes…” instruction and remains a separate, unloaded model.
+Q4_K_M and Q8_0 versions of `flint-terse-direct-experimental` are installed in LM Studio. The Q4 version is loaded at 64K context with API identifier `flint-terse`. Both use `adapters/opening-pruned` and retain Flint's original chat template, so they add no instruction to the user message. The older `flint-terse-prompt-half` appended the learned 17-token “Think in brief working notes…” instruction and remains a separate, unloaded model.
 
 ## Current result
 
@@ -22,17 +22,28 @@ The shared-correct reduction was 91% for math but only 19% for code. Nine base-c
 
 On ten ordinary development prompts, thinking fell from 10,150 to 785 tokens (92%), with all replies complete and in English. Results on six unseen conversational tasks were mixed: all completed versus five for base, but thinking increased from 6,141 to 7,069 tokens. The bakery response added an unwanted keyword list, and the capacity explanation used the wrong percentage formula despite reaching the right worker count. A constrained email also missed its word count. Final-answer preservation is therefore still a training objective, not a guarantee. Halving the adapter caused a loop on “Hi!” and was rejected.
 
-The exported GGUF completed all 16 ordinary/conversational smoke prompts in LM Studio. The exact prompt “write some python code” used three thinking tokens and returned a Python function with a normal explanation. Interval-merging passed its four checks; OpenClaw replay passed 5/6 episodes, failing when it reran completed tests instead of returning the requested JSON. Manual review also found incorrect printed outputs in the nested-list explanation, a missed email word count, and an inconsistent migration/rollback sequence. Captures are `runs/direct-experimental-{ordinary,chat,episodes}.jsonl`. These deployment checks are separate from the 100-task MLX accuracy result; runtime, quantization and seed scheduling differ.
+The Q8 GGUF completed all 16 ordinary/conversational smoke prompts in LM Studio. The exact prompt “write some python code” used three thinking tokens and returned a Python function with a normal explanation. Interval-merging passed its four checks; OpenClaw replay passed 5/6 episodes, failing when it reran completed tests instead of returning the requested JSON. Manual review also found incorrect printed outputs in the nested-list explanation, a missed email word count, and an inconsistent migration/rollback sequence. Captures are `runs/direct-experimental-{ordinary,chat,episodes}.jsonl`. These deployment checks are separate from the 100-task MLX accuracy result; runtime, quantization and seed scheduling differ.
 
 To load the installed build:
 
 ```sh
-lms load flint-terse-direct-experimental --identifier flint-terse --context-length 16384 --parallel 1 --gpu max --no-speculative-draft-mtp -y
+lms load 'flint-terse-direct-experimental@q4_k_m' --identifier flint-terse --context-length 65536 --parallel 1 --gpu max --no-speculative-draft-mtp -y
 ```
+
+The Q4_K_M file is **24.61 GB**, versus 42.64 GB for Q8_0. Its adapted embedding stays FP16 and is byte-identical to the Q8 version's; other matrices use Q4_K/Q6_K. Copy `models/flint-terse-direct-experimental-Q4_K_M.gguf` to the other machine and import it into LM Studio. No separate adapter is needed.
+
+LM Studio's memory estimates with full GPU offload, one prediction slot and no speculative draft:
+
+| Context | Q4_K_M | Q8_0 |
+|---|---:|---:|
+| 65,536 tokens | 26.94 GiB | 44.23 GiB |
+| 131,072 tokens | 30.26 GiB | 47.56 GiB |
+
+These are model/runtime estimates, not measured peak usage or guarantees of long-context answer quality. Leave room for macOS and other apps. Q4 testing at 64K context completed all 16 short conversational prompts and passed the four interval-merging assertions. It passed 4/6 tool episodes: one added an extra file check, another wrapped required JSON in Markdown. Ordinary-prompt thinking totaled 2,585 tokens versus Q8's 859, mostly due to one long lists explanation. Percentage explanations and reply-length constraints still failed review. Captures are `runs/direct-q4-{ordinary,chat,episodes}.jsonl`; the 100-task accuracy benchmark has not been rerun on Q4.
 
 ## How it works
 
-The deployed experiment learns just 2,048 values in the existing `<think>` input embedding. The `</think>` embedding and all other weights remain frozen. It trains on 220 reviewed pairs (169 train, 51 validation), selecting update 50 of 100 by validation loss. A small parameter count does not guarantee a small behavioral change.
+The deployed experiment learns just 2,048 values in the existing `<think>` input embedding: 8 KiB in float32. The saved adapter is about 609 KB because it also contains a fixed token selector. The `</think>` embedding and all other weights remain frozen. It trains on 220 reviewed pairs (169 train, 51 validation), selecting update 50 of 100 by validation loss. The learned update's L2 norm equals the original token vector's norm: a small parameter count does not mean a small change at that control point.
 
 The training tools use Flint's probabilities in these ways:
 
@@ -53,7 +64,7 @@ There are also 349 shorter-versus-original pairs (307 train, 42 validation). The
 
 ## Train and evaluate
 
-Requires Apple Silicon, `uv`, Git and LM Studio. This machine has 128 GB unified memory. The checkpoint uses about 22.6 GB, the GGUF 42.6 GB, and export needs roughly 170 GB temporary free space. Unload LM Studio models before training.
+Training requires Apple Silicon, `uv` and Git; GGUF export also needs CMake and a C++ compiler. This machine has 128 GB unified memory. The source checkpoint uses about 22.6 GB. Export needs roughly 170 GB temporary free space for Q8 or 250 GB for Q4's FP16 intermediate; running the finished GGUF does not need that scratch space. Unload LM Studio models before training.
 
 To reproduce the opening-only experiment with fresh output paths:
 
@@ -90,11 +101,11 @@ Here `--iters 800 --accumulate 4` means 200 optimizer updates. To add compact pr
 After reviewing ordinary replies, test accuracy with matched settings below. Only then export and load a candidate:
 
 ```sh
-./run.sh export --adapter adapters/opening-new --output models/flint-terse-new-Q8_0.gguf --install
+./run.sh export --adapter adapters/opening-new --outtype q4_k_m --output models/flint-terse-new-Q4_K_M.gguf --install
 lms load flint-terse-new --identifier flint-terse --context-length 16384 --parallel 1 --gpu max --no-speculative-draft-mtp -y
 ```
 
-Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. Each new GGUF needs its own LM Studio check.
+Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16. `--outtype q4_k_m` builds an FP16 intermediate from the INT4 source, then quantizes other matrices with llama-quantize. `--outtype q8_0` remains available. Temporary shards and intermediate files are removed afterward. Neither format recovers precision already lost in the source; GGUF's different quantization can change responses. Each new GGUF needs its own LM Studio check.
 
 ## Build more corpus
 
