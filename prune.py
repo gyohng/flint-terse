@@ -164,7 +164,10 @@ def main():
                 print(f"{row['id']}: invalid passage selection {selection[:200]!r}; retain native trace", flush=True)
                 chosen = list(range(len(parts)))
             wider = sorted({j for i in chosen for j in (i - 1, i, i + 1) if 0 <= j < len(parts)})
-            candidates = {join_passages(source, parts, indices) for indices in (chosen, wider)}
+            choices = [chosen, wider]
+            if chosen:
+                choices += [range(chosen[0], chosen[-1] + 1), range(chosen[0], len(parts))]
+            candidates = {join_passages(source, parts, indices) for indices in choices}
             cache = trace_cache(model, tokenizer, native)
             original = trace_scores(model, tokenizer, native, cache, per_token=True)
             best, scores = source, original
