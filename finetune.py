@@ -72,8 +72,8 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.learning_rate is None:
         args.learning_rate = .000005 if args.method == 'attention' else .001
-    if not args.evaluate_only and args.method == 'attention' and (not args.initial_adapter or args.max_change != 1):
-        p.error('Attention training requires --initial-adapter; --max-change applies only to opening training')
+    if not args.evaluate_only and args.method == 'attention' and args.max_change != 1:
+        p.error('--max-change applies only to opening training')
     if args.max_change <= 0:
         p.error('--max-change must be positive')
     if args.resume_eval and not args.evaluate_only:
@@ -114,7 +114,8 @@ def main(argv=None, loaded=None):
             if args.method == 'attention':
                 import train
                 train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
-                    '--think-adapter', args.initial_adapter, '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                    *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
+                    '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--layers', '8', '--rank', '8', '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)
