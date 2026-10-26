@@ -7,6 +7,7 @@ import operator
 import random
 import re
 import shlex
+import urllib.parse
 import urllib.request
 from fractions import Fraction
 from pathlib import Path
@@ -95,6 +96,70 @@ def code_rows(limit=200):
     for i, row in enumerate(prompts):
         row["split"] = "valid" if i < 20 else "train"
     return prompts, holdout
+
+
+def chat_rows(subset, count, rng):
+    """Import prompts only; Flint supplies its own reasoning and final reply."""
+    def page(offset, length=100):
+        query = urllib.parse.urlencode({"dataset": "HuggingFaceTB/smoltalk", "config": subset,
+                                       "split": "train", "offset": offset, "length": length})
+        with urllib.request.urlopen("https://datasets-server.huggingface.co/rows?" + query, timeout=60) as response:
+            return json.load(response)
+
+    total = page(0, 1)["num_rows_total"]
+    offsets = list(range(0, total, 100))
+    rng.shuffle(offsets)
+    result = []
+    for offset in offsets:
+        for item in page(offset)["rows"]:
+            row = item["row"]
+            if item["truncated_cells"]:
+                continue
+            if subset == "smol-magpie-ultra" and row["category"] not in ("creative-writing", "planning"):
+                continue
+            messages = row["messages"]
+            end = next(i for i, m in enumerate(messages) if m["role"] == "assistant")
+            messages = messages[:end]
+            text = "\n".join(m["content"] for m in messages)
+            if not messages or messages[-1]["role"] != "user" or not 20 <= len(text) <= 3500:
+                continue
+            word_counts = re.findall(r"\b(\d[\d,]*)[ -]+words?\b", text, re.I)
+            if any(int(n.replace(",", "")) > 350 for n in word_counts):
+                continue
+            result.append({"id": f"{subset}-{item['row_idx']}", "family": "prose",
+                           "source": "HuggingFaceTB/smoltalk/" + subset, "messages": messages})
+            if len(result) == count:
+                return result
+    raise ValueError(f"Only found {len(result)} suitable {subset} prompts")
+
+
+def expand_corpus(output):
+    output = Path(output)
+    if output.exists():
+        raise ValueError(f"{output} exists; choose a new output")
+    existing = [r for path in Path("data").glob("*.jsonl") for r in read_rows(path)]
+    used_ids = {r["id"] for r in existing if "id" in r} | {"gsm8k-train-6327", "mbpp-643"}
+    used_prompts = {json.dumps(r["messages"], sort_keys=True) for r in existing if "messages" in r}
+    math = [r for r in math_rows("data/sources/gsm8k-train.jsonl", 7473, "train") if r["id"] not in used_ids][:300]
+    code, _ = code_rows(10000)
+    code = [r for r in code if r["id"] not in used_ids][:80]
+    rng = random.Random(20261026)
+    chat = [r for subset, count in (("smol-magpie-ultra", 200), ("smol-rewrite", 150), ("smol-summarize", 150))
+            for r in chat_rows(subset, count, rng)]
+    rows = []
+    for row in math + code + chat:
+        prompt = json.dumps(row["messages"], sort_keys=True)
+        if row["id"] in used_ids or prompt in used_prompts:
+            continue
+        used_ids.add(row["id"])
+        used_prompts.add(prompt)
+        rows.append({k: v for k, v in row.items() if k in (
+            "id", "family", "source", "messages", "tools", "expected_number", "tests", "test_imports")})
+    rng.shuffle(rows)
+    for i, row in enumerate(rows):
+        row["split"] = "valid" if i % 10 == 0 else "train"
+    write_rows(output, rows)
+    print(f"Saved {len(rows)} new prompts: {len(math)} math, {len(code)} code, {len(chat)} chat before deduplication")
 
 
 def agent_rows(context, count, start=0, holdout=False):
@@ -204,6 +269,7 @@ def agent_rows(context, count, start=0, holdout=False):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--final-eval", action="store_true", help="Create 100 further math/code tasks, disjoint from the initial sets")
+    p.add_argument("--expand", metavar="OUTPUT", help="Collect new math/code and SmolTalk prompts for native-trace training")
     args = p.parse_args()
     sources = Path("data/sources")
     sources.mkdir(exist_ok=True)
@@ -216,6 +282,9 @@ def main():
         if not (sources / name).exists():
             with urllib.request.urlopen(url, timeout=60) as response:
                 (sources / name).write_bytes(response.read())
+    if args.expand:
+        expand_corpus(args.expand)
+        return
     if args.final_eval:
         code, _ = code_rows(240)
         rows = math_rows("data/sources/gsm8k-test.jsonl", 120, "test")[60:] + code[-40:]

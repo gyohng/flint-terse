@@ -6,7 +6,7 @@ The older `flint-terse-prompt-half` is installed in LM Studio but unloaded. Its 
 
 ## Current result
 
-**Reliable recap removal with preserved accuracy is not solved.** With the original embeddings, `adapters/correctness-base-qv` scored 43/50 but still recapped requests. The current `adapters/compact-preference-qv` run continues that checkpoint with explicit preferences for compact over verbose thinking; it has not been evaluated or exported.
+**Reliable recap removal with preserved accuracy is not solved.** With the original embeddings, `adapters/correctness-base-qv` scored 43/50 but still recapped requests. Continuing it with compact-versus-verbose preferences did not fix recaps and produced irrelevant reasoning even for a greeting. `adapters/compact-preference-qv` is unsuitable for deployment. A forced bullet opening also failed. The next corpus will preserve more of Flint's native working and remove redundant passages using likelihood checks.
 
 These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and a 4,096-token budget:
 
@@ -36,6 +36,8 @@ Final replies have no shortening objective. Probability anchoring encourages a s
 The current corpus has **410 reviewed pairs: 365 train, 45 validation**—189 math, 147 code, 26 OpenClaw and 48 prose. Of these, 137 training and 19 validation examples include a checked incorrect response. `data/adaptive-sampled.jsonl` contains 59 reliable self-generated traces with their matching answers; `data/adaptive-native.jsonl` contains 351 reviewed native pairs. Code tests and numeric checks guide selection, followed by review. More examples alone do not establish quality.
 
 There are also 349 shorter-versus-original pairs (307 train, 42 validation). The compact preference stage uses weight `.1`, alongside correctness preference weight `1`, answer KL `2` and answer supervision `1`. Both comparisons use complete responses and a frozen reference likelihood ratio.
+
+`data/expanded-prompts.jsonl` adds 880 new collection prompts: 300 math, 80 code and 500 prose. They are disjoint from the existing task IDs and exact prompts. The prose prompts come from the Apache-2.0 Smol-Magpie-Ultra, Smol-rewrite and Smol-summarize subsets of [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk); only prompts are imported, and Flint generates its own responses. These are collection inputs, not approved training examples.
 
 ## Train and evaluate
 
@@ -73,6 +75,15 @@ lms load flint-terse-direct --identifier flint-terse --context-length 16384 --pa
 Export merges the adapter, restores HF expert tensors and uses the pinned llama.cpp converter. Adapted matrices stay FP16; other matrix weights use Q8. Temporary full-precision shards are removed afterward. Q8 limits additional quantization error; it cannot recover precision already lost in the INT4 source. Each new GGUF needs its own LM Studio check.
 
 ## Build more corpus
+
+To collect a broader native corpus:
+
+```sh
+./run.sh build-corpus --expand data/expanded-prompts-new.jsonl
+./run.sh batch-capture data/expanded-prompts-new.jsonl --batch-size 16 --max-tokens 4096 --independent-seeds --output runs/expanded-native-new.jsonl
+```
+
+The expansion command skips task IDs and exact prompts already present in `data/`. Review the captured responses before using them as training targets.
 
 Collect several attempts per training prompt. Prefer the shortest correct trace only when repeated attempts show that short reasoning is reliable; otherwise keep useful longer work. Four short-thinking demonstrations can help collect candidates and are removed from the training inputs. `pair` preserves the native final reply exactly and stores its full thinking for the probability teacher.
 
