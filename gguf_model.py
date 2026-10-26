@@ -94,6 +94,15 @@ class GGUFLinear(nn.Module):
         (self.weight, self.scales, self.biases), self.bits, self.padded = repack(tensor)
         self.freeze()
 
+    def to_lora(self, r, scale, dropout):
+        from mlx_lm.tuner.lora import LoRALinear
+        if self.weight.ndim != 2:
+            raise ValueError('GGUF LoRA currently supports dense projections, not routed experts')
+        width = self.weight.shape[-1] * 32 // self.bits // (2 if self.padded else 1)
+        layer = LoRALinear(width, self.weight.shape[0], r=r, scale=scale, dropout=dropout)
+        layer.linear = self
+        return layer
+
     def __call__(self, x, indices=None, sorted_indices=False):
         x = x.astype(mx.float32)
         if self.padded:

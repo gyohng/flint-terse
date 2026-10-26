@@ -11,7 +11,7 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 import numpy as np
 from mlx.utils import tree_flatten, tree_map
-from mlx_lm import load
+from gguf_model import GGUFLinear, load_model as load
 from mlx_lm.models.base import create_attention_mask
 from mlx_lm.tuner.trainer import TrainingArgs, grad_checkpoint, iterate_batches, train
 from mlx_lm.tuner.utils import linear_to_lora_layers, print_trainable_parameters
@@ -116,7 +116,11 @@ def relative_weight_change(model):
             continue
         base = module.linear
         weight = base.weight
-        if isinstance(base, nn.QuantizedLinear):
+        if isinstance(base, GGUFLinear):
+            weight = mx.dequantize(base.weight, base.scales, base.biases, group_size=32, bits=base.bits)
+            if base.padded:
+                weight = weight.reshape(*weight.shape[:-1], -1, 32)[..., :16].reshape(*weight.shape[:-1], -1)
+        elif isinstance(base, nn.QuantizedLinear):
             weight = mx.dequantize(base.weight, base.scales, base.biases,
                                    group_size=base.group_size, bits=base.bits, mode=base.mode)
         delta = module.scale * (module.lora_a @ module.lora_b)
@@ -310,7 +314,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     print(f"Selected update {best_step}", flush=True)
 
 
-def main():
+def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default=BASE)
     p.add_argument("--data", default="data/prepared")
@@ -337,7 +341,7 @@ def main():
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--accumulate", type=int, default=4)
     p.add_argument("--seed", type=int, default=42)
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.iters < 1 or args.accumulate < 1 or args.iters % args.accumulate:
         p.error("--iters must be positive and divisible by --accumulate")
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
@@ -370,7 +374,7 @@ def main():
 
     np.random.seed(args.seed)
     mx.random.seed(args.seed)
-    model, tokenizer = load(args.model)
+    model, tokenizer = loaded if loaded is not None else load(args.model)
     if model.model_type != "flint":
         p.error("This recipe expects Flint")
     if args.layers > len(model.layers):
