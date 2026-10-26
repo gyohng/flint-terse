@@ -90,10 +90,12 @@ To collect a broader native corpus:
 
 ```sh
 ./run.sh build-corpus --expand data/expanded-prompts-new.jsonl
-./run.sh batch-capture data/expanded-prompts-new.jsonl --batch-size 16 --max-tokens 4096 --independent-seeds --output runs/expanded-native-new.jsonl
+for offset in 0 200 400 600 800; do
+  ./run.sh batch-capture data/expanded-prompts-new.jsonl --offset "$offset" --limit 200 --batch-size 16 --max-tokens 4096 --independent-seeds --output "runs/expanded-native-new-$offset.jsonl"
+done
 ```
 
-The expansion command skips task IDs and exact prompts already present in `data/`. Review the captured responses before using them as training targets.
+The expansion command skips task IDs and exact prompts already present in `data/`. Separate 200-prompt runs avoid the Metal resource limit encountered during a single 880-prompt collection; `--offset` preserves independent per-task seeds. Review the captured responses before using them as training targets. Commands such as `prune` and `cache-features` accept multiple input files.
 
 To remove redundant passages while keeping Flint's wording and final replies:
 

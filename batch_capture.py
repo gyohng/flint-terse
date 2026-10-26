@@ -42,12 +42,16 @@ def main():
     p.add_argument("--independent-seeds", action="store_true", help="Keep each task's random stream independent of batch scheduling")
     p.add_argument("--continue-thinking", action="store_true", help="Regenerate final replies after the supplied thinking; not a free-generation evaluation")
     p.add_argument("--limit", type=int)
+    p.add_argument("--offset", type=int, default=0, help="Start at this task index; independent seeds keep their original indices")
     args = p.parse_args()
     if min(args.batch_size, args.samples, args.max_tokens) < 1:
         p.error("batch size, samples and max tokens must be positive")
+    if args.offset < 0 or (args.limit is not None and args.limit < 1):
+        p.error("offset must be nonnegative and limit positive")
     rows = read_rows(args.input)
-    if args.limit:
-        rows = rows[:args.limit]
+    rows = rows[args.offset:args.offset + args.limit if args.limit else None]
+    if not rows:
+        p.error("No tasks in the requested slice")
     if args.continue_thinking:
         for row in rows:
             thought = row.get("assistant", {}).get("reasoning_content")
@@ -65,7 +69,8 @@ def main():
         completion_batch_size=args.batch_size, prefill_batch_size=args.batch_size,
         prefill_step_size=512,
     )
-    samplers = [request_sampler(args.seed + i, args.temperature) for i in range(len(prompts))] if args.independent_seeds else None
+    samplers = [request_sampler(args.seed + args.offset * args.samples + i, args.temperature)
+                for i in range(len(prompts))] if args.independent_seeds else None
     uids = gen.insert(prompts, samplers=samplers)
     # Let completed requests release their random-key graphs during large collections.
     del samplers
