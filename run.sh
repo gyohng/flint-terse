@@ -18,6 +18,9 @@ case "${1:-help}" in
       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DGGML_METAL=OFF
     cmake --build .tools/llama.cpp/build --target llama-quantize -j 8
     ;;
+  setup-lmstudio)
+    npm install --prefix .tools/lms-sdk --no-save @lmstudio/sdk@2.1.0
+    ;;
   download)
     .venv/bin/python - <<'PY'
 from huggingface_hub import snapshot_download
@@ -74,6 +77,14 @@ PY
     shift
     .venv/bin/python export.py "$@"
     ;;
+  export-adapter)
+    shift
+    .tools/gguf-venv/bin/python export_adapter.py "$@"
+    ;;
+  load-lmstudio)
+    shift
+    node load_lmstudio.mjs "$@"
+    ;;
   test)
     .venv/bin/python -m unittest discover -s tests -v
     ;;
@@ -83,13 +94,16 @@ PY
 ./run.sh setup-gguf
 ./run.sh download
 ./run.sh serve # Original MLX weights + separate adapter; API model: default_model
+./run.sh export-adapter # FP32 GGUF adapter + Jinja override; no base conversion
+./run.sh setup-lmstudio
+./run.sh load-lmstudio # Original downloaded Q4 GGUF + separate FP32 adapter
 # README.md contains the opening-only training recipe and attention alternatives.
 ./run.sh train-prompt --help
 ./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-pruned --output runs/direct-check.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --adapter adapters/terse --output runs/terse.jsonl
 ./run.sh compare runs/base.jsonl runs/terse.jsonl
-# Review accuracy and final replies before exporting; the installed build is experimental.
+# Optional merged/requantized export; use export-adapter to keep the base unchanged.
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 
 Corpus building:

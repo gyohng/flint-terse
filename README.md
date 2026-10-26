@@ -4,7 +4,23 @@ Compress Flint's `<think>` into useful working notes and equations while keeping
 
 Training used `models/flint-int4`, the original MLX INT4 checkpoint, with a separate adapter in `adapters/opening-pruned`. Neither training nor native inference rewrites the source weights. The Q4_K_M and Q8_0 GGUFs previously installed in LM Studio are **requantized, merged derivatives**, not exact copies of that checkpoint. Q8 was an export format, not the training source.
 
-## Original base + separate adapter
+## Original GGUF + separate adapter in LM Studio
+
+```sh
+./run.sh setup-lmstudio # Requires Node.js and npm
+./run.sh export-adapter # Uses .tools/gguf-venv from setup-gguf
+./run.sh load-lmstudio
+```
+
+Loads the already-downloaded **`recursivesi/flint@q4_k_m`** as **`flint-terse-original-q4`** with a separate **609,088-byte FP32 GGUF adapter**. The original 24.17 GB GGUF stays untouched. No base weights are read by the adapter exporter; it preserves the adapter's FP32 coefficients and checks them after writing. LM Studio's advanced llama.cpp arguments attach the adapter at load time. This was tested with SDK 2.1.0 and the installed llama.cpp runtime 2.64.0.
+
+The generated `adapters/opening-pruned/chat_template.jinja` overrides the template and removes only `| replace("\x00", "")`. The original template stays untouched. No brevity instruction is appended.
+
+For another Mac, copy the original GGUF and the `adapters/opening-pruned` directory, import the GGUF into LM Studio, and use this repo's load script. `./run.sh load-lmstudio --model MODEL_KEY --identifier flint-terse --context 65536` selects a different library key or context size. It uses one prediction slot, FP16 KV cache by the installed runtime's default, and no speculative draft. The separate adapter is never merged into the base.
+
+**This preserves the downloaded GGUF exactly, but that GGUF is a different quantization from the MLX training checkpoint.** The previous GGUF benchmark scores do not apply to this combination. To run the exact training base plus adapter, use the native route below.
+
+## Original MLX training base + separate adapter
 
 ```sh
 ./run.sh serve
@@ -17,7 +33,9 @@ This uses the pinned MLX runtime directly. Keep `"model":"default_model"` in API
 
 For another Mac, copy the original `models/flint-int4` directory and `adapters/opening-pruned`, then run `./run.sh setup` and `./run.sh serve` from this repo. The base is about 22.6 GB; its original packed weights, scales and biases stay in their existing Safetensors files. The separate adapter is 608,974 bytes, including 2,048 learned FP32 values and a fixed selector. No merge, dequantization or requantization is needed. Context memory grows with use; `--max-tokens` limits output length, not the context window.
 
-All five base shards and the tokenizer/configuration files were checked byte for byte against published hashes at source revision `3b93f9053b530488405ae9fca51d4900d6ce21f0`. The opening-only adapter adds no prompt instruction. The older `flint-terse-prompt-half` model used the learned “Think in brief working notes…” prefix and is a different experiment.
+All five base shards and the tokenizer/configuration files were checked byte for byte against published hashes at source revision `3b93f9053b530488405ae9fca51d4900d6ce21f0`. All 1,751 loaded base tensors also matched their original stored bytes with the adapter attached. LM Studio's installed MLX runtime 1.13.1 lacks the Flint architecture; the pinned native runtime supports it. This is separate from the GGUF Jinja issue fixed above.
+
+The opening-only adapter adds no prompt instruction. The older `flint-terse-prompt-half` model used the learned “Think in brief working notes…” prefix and is a different experiment.
 
 ## Current result
 
@@ -39,7 +57,7 @@ On ten ordinary development prompts, thinking fell from 10,150 to 785 tokens (92
 
 The Q8 GGUF completed all 16 ordinary/conversational smoke prompts in LM Studio. The exact prompt “write some python code” used three thinking tokens and returned a Python function with a normal explanation. Interval-merging passed its four checks; OpenClaw replay passed 5/6 episodes, failing when it reran completed tests instead of returning the requested JSON. Manual review also found incorrect printed outputs in the nested-list explanation, a missed email word count, and an inconsistent migration/rollback sequence. Captures are `runs/direct-experimental-{ordinary,chat,episodes}.jsonl`. These deployment checks are separate from the 100-task MLX accuracy result; runtime, quantization and seed scheduling differ.
 
-To load the installed build:
+To load the earlier merged export:
 
 ```sh
 lms load 'flint-terse-direct-experimental@q4_k_m' --identifier flint-terse --context-length 65536 --parallel 1 --gpu max --no-speculative-draft-mtp -y
