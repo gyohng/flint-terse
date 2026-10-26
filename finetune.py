@@ -83,6 +83,9 @@ def main(argv=None, loaded=None):
         if config['base_model']['sha256'] != source['sha256']:
             p.error('The adapter was trained against a different GGUF')
     else:
+        for entry in json.loads(subprocess.check_output(['lms', 'ps', '--json'])):
+            if entry['identifier'] in {'flint-terse', 'flint-terse-eval', 'flint-base-eval'}:
+                run('lms', 'unload', entry['identifier'])
         from gguf import GGUFReader
         reader = GGUFReader(model)
         if reader.fields['general.architecture'].contents() != 'flint':
