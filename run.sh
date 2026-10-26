@@ -61,6 +61,15 @@ PY
     shift
     .venv/bin/python openclaw.py "$@"
     ;;
+  serve)
+    shift
+    exec .venv/bin/mlx_lm.server \
+      --model models/flint-int4 --adapter-path adapters/opening-pruned \
+      --host 127.0.0.1 --port 8080 \
+      --temp 1 --top-p .95 --top-k 20 --max-tokens 4096 \
+      --decode-concurrency 1 --prompt-concurrency 1 \
+      --prefill-step-size 512 --prompt-cache-size 1 "$@"
+    ;;
   export)
     shift
     .venv/bin/python export.py "$@"
@@ -73,6 +82,7 @@ PY
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
+./run.sh serve # Original MLX weights + separate adapter; API model: default_model
 # README.md contains the opening-only training recipe and attention alternatives.
 ./run.sh train-prompt --help
 ./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-pruned --output runs/direct-check.jsonl

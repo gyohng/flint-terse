@@ -2,7 +2,22 @@
 
 Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. Train small adapters without adding text to the prompt.
 
-Q4_K_M and Q8_0 versions of `flint-terse-direct-experimental` are installed in LM Studio. Both use `adapters/opening-pruned` and retain Flint's original chat template, so they add no instruction to the user message. Training used the MLX INT4 checkpoint; Q8 is an export format, not the training source. The older `flint-terse-prompt-half` appended the learned 17-token “Think in brief working notes…” instruction and remains a separate model.
+Training used `models/flint-int4`, the original MLX INT4 checkpoint, with a separate adapter in `adapters/opening-pruned`. Neither training nor native inference rewrites the source weights. The Q4_K_M and Q8_0 GGUFs previously installed in LM Studio are **requantized, merged derivatives**, not exact copies of that checkpoint. Q8 was an export format, not the training source.
+
+## Original base + separate adapter
+
+```sh
+./run.sh serve
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"default_model","messages":[{"role":"user","content":"write some python code"}],"max_tokens":1024}'
+```
+
+This uses the pinned MLX runtime directly. Keep `"model":"default_model"` in API requests: this alias selects both the base and the adapter. Naming the base path alone can load it without the adapter. Server options can be appended, for example `./run.sh serve --port 8081`.
+
+For another Mac, copy the original `models/flint-int4` directory and `adapters/opening-pruned`, then run `./run.sh setup` and `./run.sh serve` from this repo. The base is about 22.6 GB; its original packed weights, scales and biases stay in their existing Safetensors files. The separate adapter is 608,974 bytes, including 2,048 learned FP32 values and a fixed selector. No merge, dequantization or requantization is needed. Context memory grows with use; `--max-tokens` limits output length, not the context window.
+
+All five base shards and the tokenizer/configuration files were checked byte for byte against published hashes at source revision `3b93f9053b530488405ae9fca51d4900d6ce21f0`. The opening-only adapter adds no prompt instruction. The older `flint-terse-prompt-half` model used the learned “Think in brief working notes…” prefix and is a different experiment.
 
 ## Current result
 
