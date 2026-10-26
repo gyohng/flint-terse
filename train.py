@@ -391,7 +391,11 @@ def main(argv=None, loaded=None):
     frozen_weights = None
     if args.think_adapter:
         previous = json.loads((Path(args.think_adapter) / "adapter_config.json").read_text())
-        if (previous.get("model") != args.model or previous.get("think_tokens") is not True
+        same_base = previous.get('model') == args.model
+        if not same_base and Path(args.model).suffix.lower() == '.gguf' and previous.get('base_model', {}).get('sha256'):
+            from checkpoint import sha256
+            same_base = sha256(args.model) == previous['base_model']['sha256']
+        if (not same_base or previous.get("think_tokens") is not True
             or previous.get("prompt_tokens") or previous["lora_parameters"]["keys"] != ["model.embed_tokens"]):
             p.error("--think-adapter must tune only the same model's native thinking tokens")
         frozen_weights = freeze_thinking_embedding(model.model.embed_tokens,

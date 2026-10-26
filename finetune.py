@@ -56,8 +56,9 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
+    p.add_argument('--method', choices=('opening', 'attention'), default='opening')
     p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
-    p.add_argument('--learning-rate', type=float, default=.001)
+    p.add_argument('--learning-rate', type=float, help='Defaults to .001 for opening, .000005 for attention')
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
@@ -69,6 +70,10 @@ def main(argv=None, loaded=None):
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
+    if args.learning_rate is None:
+        args.learning_rate = .000005 if args.method == 'attention' else .001
+    if not args.evaluate_only and args.method == 'attention' and (not args.initial_adapter or args.max_change != 1):
+        p.error('Attention training requires --initial-adapter; --max-change applies only to opening training')
     if args.max_change <= 0:
         p.error('--max-change must be positive')
     if args.resume_eval and not args.evaluate_only:
@@ -106,12 +111,20 @@ def main(argv=None, loaded=None):
             features = Path(tmp) / 'features.safetensors'
             cache_features.main([*args.data, '--model', str(model), '--original-reasoning',
                 '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
-            train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
-                '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
-                '--steps', str(args.steps), '--max-change', str(args.max_change),
-                '--learning-rate', str(args.learning_rate),
-                '--max-tokens', '16384', '--output', str(args.output),
-                *(['--initial-adapter', args.initial_adapter] if args.initial_adapter else [])], loaded=loaded)
+            if args.method == 'attention':
+                import train
+                train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
+                    '--think-adapter', args.initial_adapter, '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                    '--layers', '8', '--rank', '8', '--iters', str(args.steps * 4),
+                    '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
+                    '--output', str(args.output)], loaded=loaded)
+            else:
+                train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
+                    '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                    '--steps', str(args.steps), '--max-change', str(args.max_change),
+                    '--learning-rate', str(args.learning_rate),
+                    '--max-tokens', '16384', '--output', str(args.output),
+                    *(['--initial-adapter', args.initial_adapter] if args.initial_adapter else [])], loaded=loaded)
         del loaded
         gc.collect()
         mx.clear_cache()
@@ -147,6 +160,11 @@ def main(argv=None, loaded=None):
             for row in rows:
                 row.update(base_sha256=source['sha256'], context=args.context)
             output.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
+            if label == 'terse':
+                start = len(results[label])
+                reference = results['base'][start:start + len(rows)]
+                if sum(r['correct'] is True for r in rows) < sum(r['correct'] is True for r in reference):
+                    raise SystemExit(f'{dataset}: quality regression; stopping the remaining evaluation tasks.')
             results[label].extend(rows)
         if label == 'base':
             run('lms', 'unload', identifier)
