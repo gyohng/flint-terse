@@ -514,7 +514,7 @@ def trace_cache(model, tokenizer, row):
     return cache
 
 
-def trace_scores(model, tokenizer, row, cache=None):
+def trace_scores(model, tokenizer, row, cache=None, per_token=False):
     """Score new prefixes; an optional prompt cache is shared across candidate traces."""
     import mlx.core as mx
     import mlx.nn as nn
@@ -528,12 +528,17 @@ def trace_scores(model, tokenizer, row, cache=None):
         logits = model(mx.array([tokens[start:end]]), cache=cache)
         values = nn.losses.cross_entropy(logits.astype(mx.float32), mx.array([tokens[start + 1:end + 1]]))
         nll.extend(values[0].tolist())
-    return {
+    scores = {
         "reasoning_tokens": closing - offset - 1,
         "reasoning_nll": statistics.mean(nll[offset:closing - 1]) if closing > offset + 1 else 0.0,
+        "thinking_end_nll": nll[closing - 1],
         "answer_nll": statistics.mean(nll[closing:-1]),
+        "answer_start_nll": statistics.mean(nll[closing:min(closing + 8, len(nll) - 1)]),
         "ending_nll": nll[-1],
     }
+    if per_token:
+        scores.update(reasoning_ids=tokens[offset + 1:closing], reasoning_losses=nll[offset:closing - 1])
+    return scores
 
 
 def score(args):

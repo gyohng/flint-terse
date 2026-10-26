@@ -40,6 +40,7 @@ def main():
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--independent-seeds", action="store_true", help="Keep each task's random stream independent of batch scheduling")
+    p.add_argument("--continue-thinking", action="store_true", help="Regenerate final replies after the supplied thinking; not a free-generation evaluation")
     p.add_argument("--limit", type=int)
     args = p.parse_args()
     if min(args.batch_size, args.samples, args.max_tokens) < 1:
@@ -47,6 +48,12 @@ def main():
     rows = read_rows(args.input)
     if args.limit:
         rows = rows[:args.limit]
+    if args.continue_thinking:
+        for row in rows:
+            thought = row.get("assistant", {}).get("reasoning_content")
+            if not isinstance(thought, str) or any(t in thought for t in ("<think>", "</think>")) or "generation_prefix" in row:
+                p.error(f"{row['id']}: need plain reasoning_content and no existing generation_prefix")
+            row["generation_prefix"] = f"<think>{thought}</think>"
     model, tokenizer = load(args.model, adapter_path=args.adapter)
     configure_adapter_tokenizer(tokenizer, args.adapter)
     mx.random.seed(args.seed)

@@ -320,17 +320,22 @@ class TrainingTests(unittest.TestCase):
     def test_cached_likelihood_matches_full_forward_and_can_be_reused(self):
         model = tiny_flint()
         model.eval()
-        tokens, offset = [2, 3, 4, 5, 8, 6, 42, 7, 11, 1], 5
-        tokenizer = SimpleNamespace(encode=lambda *a, **k: tokens[:offset], convert_tokens_to_ids=lambda _: 7)
-        nll = nn.losses.cross_entropy(model(mx.array([tokens[:-1]])).astype(mx.float32), mx.array([tokens[1:]]))[0]
-        with patch("corpus.training_tokens", return_value=(tokens, offset)), patch("corpus.prompt_text", return_value="prompt"):
-            cache = trace_cache(model, tokenizer, {})
-            first = trace_scores(model, tokenizer, {}, cache)
-            second = trace_scores(model, tokenizer, {}, cache)
-        self.assertEqual(first, second)
-        self.assertAlmostEqual(first["reasoning_nll"], nll[5].item(), places=5)
-        self.assertAlmostEqual(first["answer_nll"], nll[7].item(), places=5)
-        self.assertAlmostEqual(first["ending_nll"], nll[8].item(), places=5)
+        for answer in ([11], list(range(12, 24))):
+            tokens, offset = [2, 3, 4, 5, 8, 6, 42, 7] + answer + [1], 5
+            tokenizer = SimpleNamespace(encode=lambda *a, **k: tokens[:offset], convert_tokens_to_ids=lambda _: 7)
+            nll = nn.losses.cross_entropy(model(mx.array([tokens[:-1]])).astype(mx.float32), mx.array([tokens[1:]]))[0]
+            with patch("corpus.training_tokens", return_value=(tokens, offset)), patch("corpus.prompt_text", return_value="prompt"):
+                cache = trace_cache(model, tokenizer, {})
+                first = trace_scores(model, tokenizer, {}, cache, per_token=True)
+                second = trace_scores(model, tokenizer, {}, cache, per_token=True)
+            self.assertEqual(first, second)
+            self.assertAlmostEqual(first["reasoning_nll"], nll[5].item(), places=5)
+            self.assertEqual(first["reasoning_ids"], [42])
+            self.assertAlmostEqual(first["reasoning_losses"][0], nll[5].item(), places=5)
+            self.assertAlmostEqual(first["thinking_end_nll"], nll[6].item(), places=5)
+            self.assertAlmostEqual(first["answer_nll"], nll[7:-1].mean().item(), places=5)
+            self.assertAlmostEqual(first["answer_start_nll"], nll[7:min(15, len(nll) - 1)].mean().item(), places=5)
+            self.assertAlmostEqual(first["ending_nll"], nll[-1].item(), places=5)
 
     def test_sampling_selects_by_checked_correctness_then_token_count(self):
         def trace(name, tokens, correct, complete=True):

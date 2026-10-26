@@ -1,12 +1,46 @@
+import json
 import unittest
 
 from code_checks import check_python
 from corpus import check_answer, prefix_template
 from make_corpus import arithmetic
 from preferences import add_preferences
+from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
 class CorpusTests(unittest.TestCase):
+    def test_pruning_preserves_code_and_selects_only_original_passages(self):
+        code = '```python\nx = 1.25\n\nprint("Done. Next.")\n```'
+        source = 'We need answer. Compute 2.5 * 4 = 10.\n\n' + code + '\n\nDone.'
+        parts = passages(source)
+        self.assertEqual(parts, ['We need answer.', 'Compute 2.5 * 4 = 10.', code, 'Done.'])
+        self.assertEqual(selected_passages('```json\n[3, 2, 3]\n```', len(parts)), [1, 2])
+        self.assertEqual(selected_passages('[]', len(parts)), [])
+        self.assertEqual(selected_passages('["2", "3"]', len(parts)), [1, 2])
+        self.assertEqual(join_passages(source, parts, range(len(parts))), source)
+        self.assertEqual(join_passages(source, parts, [1, 3]), 'Compute 2.5 * 4 = 10.\n\nDone.')
+        for invalid in ('[0]', '[5]', '[true]', '[1.5]', '{}', 'Use [2]'):
+            with self.subTest(selection=invalid), self.assertRaises(ValueError):
+                selected_passages(invalid, len(parts))
+
+    def test_pruning_compares_the_same_retained_tokens_and_closing_tag(self):
+        original = {"reasoning_ids": [1, 2, 3, 4], "reasoning_losses": [.01, .02, 2, 3], "thinking_end_nll": .1}
+        edited = {"reasoning_ids": [3, 4], "reasoning_losses": [2.3, 3.3], "thinking_end_nll": .4}
+        self.assertAlmostEqual(reasoning_shift(original, edited), .3)
+        self.assertAlmostEqual(reasoning_shift(original, original), 0)
+        self.assertAlmostEqual(reasoning_shift(original, {"reasoning_ids": [], "reasoning_losses": [], "thinking_end_nll": 4}), 3.9)
+        self.assertEqual(reasoning_shift(original, {**edited, "reasoning_ids": [9, 10]}), float("inf"))
+
+    def test_passage_editor_keeps_tool_schema_and_answer_as_data(self):
+        row = {"messages": [{"role": "user", "content": "Search for a file"}],
+               "tools": [{"type": "function", "function": {"name": "search", "parameters": {"type": "object"}}}],
+               "assistant": {"reasoning_content": "Search first.", "content": "", "tool_calls": [{"function": {"name": "search"}}]}}
+        data = json.loads(editing_messages(row, ["Search first."])[-1]["content"])
+        self.assertEqual(data["tools"], row["tools"])
+        self.assertEqual(data["task"], row["messages"])
+        self.assertEqual(data["answer"]["tool_calls"], row["assistant"]["tool_calls"])
+        self.assertNotIn("reasoning_content", data["answer"])
+
     def test_preferences_recheck_answers_and_exclude_incomplete_attempts(self):
         row = {"id": "sum", "messages": [{"role": "user", "content": "20+22?"}],
                "expected_number": 42, "approved": True, "assistant": {"content": "42"}}

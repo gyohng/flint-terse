@@ -85,6 +85,17 @@ To collect a broader native corpus:
 
 The expansion command skips task IDs and exact prompts already present in `data/`. Review the captured responses before using them as training targets.
 
+To remove redundant passages while keeping Flint's wording and final replies:
+
+```sh
+./run.sh prune runs/native.jsonl --build --output runs/edit-prompts.jsonl
+./run.sh batch-capture runs/edit-prompts.jsonl --temperature 0 --batch-size 16 --max-tokens 4096 --output runs/edits.jsonl
+./run.sh prune runs/native.jsonl --selections runs/edits.jsonl --reasoning-slack 1.5 --answer-start-slack .3 --output runs/pruned.jsonl
+./run.sh batch-capture runs/pruned.jsonl --continue-thinking --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/pruned-answers.jsonl
+```
+
+`prune` compares the likelihood of retained tokens under the original and shortened contexts, including the closing thinking tag. It also limits the increase in final-answer NLL to `.1` nats/token and checks the first eight answer tokens separately. Failed candidates retain the native trace; edited rows need review. These thresholds are experimental, not a guarantee of equivalent reasoning. The continuation check regenerates answers after fixed thinking, so it checks the corpus rather than a trained model's ability to think briefly.
+
 Collect several attempts per training prompt. Prefer the shortest correct trace only when repeated attempts show that short reasoning is reliable; otherwise keep useful longer work. Four short-thinking demonstrations can help collect candidates and are removed from the training inputs. `pair` preserves the native final reply exactly and stores its full thinking for the probability teacher.
 
 ```sh
