@@ -15,9 +15,11 @@ Requires Apple Silicon, `uv`, Node.js/npm, and regular LM Studio. Missing Python
 
 The default is [`lmstudio-community/flint-GGUF`](https://huggingface.co/lmstudio-community/flint-GGUF), `flint-Q4_K_M.gguf`, revision `a14b4396552988f5bf1427c2ab23f3ade4b683a8`. Its SHA-256 is `20c89707f762af73f0840f7b2c2911193617e60cac2ae30a96cb2cda7c15927e`. The script searches local `models/` and LM Studio folders, verifies a matching file, and downloads only if necessary. `--model-dir` adds another search directory. Other checkpoints must currently use Flint's architecture and supported GGUF quantizations (Q4_K, Q6_K, Q8_0, F16 or F32).
 
-The pipeline caches the frozen teacher, trains the opening-token adapter, exports it separately, checks the base checksum, and compares base versus adapter in LM Studio on `data/release-eval.jsonl`. It fails if the candidate loses aggregate checked accuracy or completions, or fails to shorten thinking on shared correct answers. Passing this finite test does not prove unchanged quality on every task; inspect final replies and task-level regressions too. The GGUF-trained release is still being validated.
+The pipeline caches the frozen teacher, trains the opening-token adapter, exports it separately, checks the base checksum, and compares base versus adapter in LM Studio on 100 math/code tasks from `data/release-eval.jsonl` and 16 ordinary/conversational prompts. All 116 prompts are separate from the training corpus. It fails if the candidate loses aggregate checked accuracy or completions, or fails to shorten thinking on shared correct answers. Passing this finite test does not prove unchanged quality on every task; inspect final replies and task-level regressions too. The GGUF-trained adapter has finished training; its deployment evaluation is still running. Training selected update 100 by validation loss (9.05 → 6.27), taking 7 minutes 26 seconds after loading and teacher caching on this machine.
 
 Output goes to `release/flint-terse`: the FP32 adapter in GGUF and Safetensors, its configuration identifying the exact base, and a Jinja override removing only `| replace("\x00", "")`. No instruction is appended to the prompt. The base GGUF stays untouched. The loaded model identifier is **`flint-terse`**.
+
+If deployment fails after training, use `./run.sh finetune --evaluate-only` to evaluate the saved adapter without retraining. Existing evaluation files are never overwritten.
 
 For redeployment, copy that small directory, download/import the matching original GGUF in LM Studio, and run:
 

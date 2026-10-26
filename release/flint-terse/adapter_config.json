@@ -1,0 +1,45 @@
+{
+  "input": [
+    "data/on-policy-pilot.jsonl",
+    "data/prose-extra-paired.jsonl",
+    "data/pruned-pilot.jsonl"
+  ],
+  "teacher_features": [
+    "/Users/george/CODE/AGENTDEV/flint-terse/runs/flint-teacher-i_o63_au/features.safetensors"
+  ],
+  "model": "/Users/george/.lmstudio/models/lmstudio-community/flint-GGUF/flint-Q4_K_M.gguf",
+  "output": "release/flint-terse",
+  "resume": null,
+  "checkpoint": "best",
+  "steps": 100,
+  "accumulate": 4,
+  "learning_rate": 0.001,
+  "max_change": 1,
+  "prompt_strength": 1,
+  "answer_kl": 8.0,
+  "answer_weight": 1.0,
+  "start_weight": 3.0,
+  "prompt_role": null,
+  "max_tokens": 16384,
+  "init_text": null,
+  "think_tokens": true,
+  "think_opening": true,
+  "seed": 42,
+  "fine_tune_type": "lora",
+  "num_layers": 1,
+  "prompt_tokens": [],
+  "lora_parameters": {
+    "rank": 1,
+    "scale": 1.0,
+    "dropout": 0.0,
+    "keys": [
+      "model.embed_tokens"
+    ]
+  },
+  "base_model": {
+    "repo": "lmstudio-community/flint-GGUF",
+    "revision": "a14b4396552988f5bf1427c2ab23f3ade4b683a8",
+    "filename": "flint-Q4_K_M.gguf",
+    "sha256": "20c89707f762af73f0840f7b2c2911193617e60cac2ae30a96cb2cda7c15927e"
+  }
+}
