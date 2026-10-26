@@ -15,7 +15,7 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def main():
+def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('model', nargs='?', default=DEFAULT_MODEL, help='Local GGUF or owner/repository:filename.gguf')
     p.add_argument('--revision', help='Hugging Face revision; the default checkpoint is pinned')
@@ -26,7 +26,7 @@ def main():
     p.add_argument('--eval', default='data/release-eval.jsonl')
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.output.exists():
         p.error(f'{args.output} exists; choose a new --output')
     for label in ('base', 'terse'):
@@ -44,7 +44,8 @@ def main():
     import train_prompt
     from gguf_model import load_model
     import mlx.core as mx
-    loaded = load_model(str(model))
+    if loaded is None:
+        loaded = load_model(str(model))
     with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
         features = Path(tmp) / 'features.safetensors'
         cache_features.main([*args.data, '--model', str(model), '--original-reasoning',

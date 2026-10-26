@@ -2,42 +2,35 @@
 
 Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. Train small adapters without adding text to the prompt.
 
-Training used `models/flint-int4`, the original MLX INT4 checkpoint, with a separate adapter in `adapters/opening-pruned`. Neither training nor native inference rewrites the source weights. The Q4_K_M and Q8_0 GGUFs previously installed in LM Studio are **requantized, merged derivatives**, not exact copies of that checkpoint. Q8 was an export format, not the training source.
-
-## Original GGUF + separate adapter in LM Studio
+## Train and deploy from the original GGUF
 
 ```sh
-./run.sh setup-lmstudio # Requires Node.js and npm
-./run.sh export-adapter # Uses .tools/gguf-venv from setup-gguf
+./run.sh finetune
+# Or choose another Flint checkpoint:
+./run.sh finetune /path/to/flint.gguf --output release/my-flint-terse
+./run.sh finetune owner/repository:filename.gguf --revision COMMIT
+```
+
+Requires Apple Silicon, `uv`, Node.js/npm, and regular LM Studio. Missing Python and SDK environments are installed automatically. Training reads the GGUF coefficients into MLX for differentiation; deployment uses the original GGUF in LM Studio's llama.cpp runtime. It does not use the old MLX checkpoint or requantize the base. Training needs more memory than deployment because the lossless working representation and gradients occupy extra RAM.
+
+The default is [`lmstudio-community/flint-GGUF`](https://huggingface.co/lmstudio-community/flint-GGUF), `flint-Q4_K_M.gguf`, revision `a14b4396552988f5bf1427c2ab23f3ade4b683a8`. Its SHA-256 is `20c89707f762af73f0840f7b2c2911193617e60cac2ae30a96cb2cda7c15927e`. The script searches local `models/` and LM Studio folders, verifies a matching file, and downloads only if necessary. `--model-dir` adds another search directory. Other checkpoints must currently use Flint's architecture and supported GGUF quantizations (Q4_K, Q6_K, Q8_0, F16 or F32).
+
+The pipeline caches the frozen teacher, trains the opening-token adapter, exports it separately, checks the base checksum, and compares base versus adapter in LM Studio on `data/release-eval.jsonl`. It fails if the candidate loses aggregate checked accuracy or completions, or fails to shorten thinking on shared correct answers. Passing this finite test does not prove unchanged quality on every task; inspect final replies and task-level regressions too. The GGUF-trained release is still being validated.
+
+Output goes to `release/flint-terse`: the FP32 adapter in GGUF and Safetensors, its configuration identifying the exact base, and a Jinja override removing only `| replace("\x00", "")`. No instruction is appended to the prompt. The base GGUF stays untouched. The loaded model identifier is **`flint-terse`**.
+
+For redeployment, copy that small directory, download/import the matching original GGUF in LM Studio, and run:
+
+```sh
+./run.sh setup-lmstudio
 ./run.sh load-lmstudio
+# If the model has a different library key:
+./run.sh load-lmstudio --model MODEL_KEY --adapter release/flint-terse
 ```
 
-Loads the already-downloaded **`recursivesi/flint@q4_k_m`** as **`flint-terse-original-q4`** with a separate **609,088-byte FP32 GGUF adapter**. The original 24.17 GB GGUF stays untouched. No base weights are read by the adapter exporter; it preserves the adapter's FP32 coefficients and checks them after writing. LM Studio's advanced llama.cpp arguments attach the adapter at load time. This was tested with SDK 2.1.0 and the installed llama.cpp runtime 2.64.0.
+## Earlier MLX experiment
 
-The generated `adapters/opening-pruned/chat_template.jinja` overrides the template and removes only `| replace("\x00", "")`. The original template stays untouched. No brevity instruction is appended.
-
-For another Mac, copy the original GGUF and the `adapters/opening-pruned` directory, import the GGUF into LM Studio, and use this repo's load script. `./run.sh load-lmstudio --model MODEL_KEY --identifier flint-terse --context 65536` selects a different library key or context size. It uses one prediction slot, FP16 KV cache by the installed runtime's default, and no speculative draft. The separate adapter is never merged into the base.
-
-**This preserves the downloaded GGUF exactly, but that GGUF is a different quantization from the MLX training checkpoint.** The previous GGUF benchmark scores do not apply to this combination. To run the exact training base plus adapter, use the native route below.
-
-## Original MLX training base + separate adapter
-
-```sh
-./run.sh serve
-curl http://127.0.0.1:8080/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"default_model","messages":[{"role":"user","content":"write some python code"}],"max_tokens":1024}'
-```
-
-This uses the pinned MLX runtime directly. Keep `"model":"default_model"` in API requests: this alias selects both the base and the adapter. Naming the base path alone can load it without the adapter. Server options can be appended, for example `./run.sh serve --port 8081`.
-
-For another Mac, copy the original `models/flint-int4` directory and `adapters/opening-pruned`, then run `./run.sh setup` and `./run.sh serve` from this repo. The base is about 22.6 GB; its original packed weights, scales and biases stay in their existing Safetensors files. The separate adapter is 608,974 bytes, including 2,048 learned FP32 values and a fixed selector. No merge, dequantization or requantization is needed. Context memory grows with use; `--max-tokens` limits output length, not the context window.
-
-All five base shards and the tokenizer/configuration files were checked byte for byte against published hashes at source revision `3b93f9053b530488405ae9fca51d4900d6ce21f0`. All 1,751 loaded base tensors also matched their original stored bytes with the adapter attached. LM Studio's installed MLX runtime 1.13.1 lacks the Flint architecture; the pinned native runtime supports it. This is separate from the GGUF Jinja issue fixed above.
-
-The opening-only adapter adds no prompt instruction. The older `flint-terse-prompt-half` model used the learned “Think in brief working notes…” prefix and is a different experiment.
-
-## Current result
+The results below belong to `adapters/opening-pruned`, trained on the separately downloaded `RecursiveSI/flint-int4` MLX checkpoint. They do not establish the quality of the new GGUF-trained adapter. Its old Q4_K_M and Q8_0 exports are merged, requantized derivatives. The old exact MLX checkpoint plus adapter remains runnable through `./run.sh serve` with API model `default_model`.
 
 **Useful compression, with remaining quality problems.** On 100 previously unseen math/code tasks, the opening-only adapter scored 82/100 versus native Flint's 84/100. Thinking fell 70.2% on the 75 tasks both answered correctly. This small comparison does not establish unchanged accuracy, and the model still sometimes recaps or drafts its answer twice.
 
