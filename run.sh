@@ -79,7 +79,7 @@ PY
     ;;
   export-adapter)
     shift
-    .tools/gguf-venv/bin/python export_adapter.py "$@"
+    .venv/bin/python export_adapter.py "$@"
     ;;
   load-lmstudio)
     shift
@@ -96,6 +96,8 @@ PY
     ;;
   *)
     cat <<'EOF'
+./run.sh finetune # Find/download the original Q4 GGUF, train, evaluate, load flint-terse
+./run.sh finetune /path/to/flint.gguf --output release/my-flint-terse
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
