@@ -1,3 +1,4 @@
 mlx-lm @ git+https://github.com/ml-explore/mlx-lm@4cfc6478473b0668ede3eb0cc93f2a9181a15052
 mlx==0.32.4
 transformers==5.20.2
+gguf @ git+https://github.com/ggml-org/llama.cpp@b3fa69955ea81c3b60e77e3c1e2224c4a826ffb9#subdirectory=gguf-py

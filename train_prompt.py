@@ -11,7 +11,7 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
-from mlx_lm import load
+from gguf_model import load_model as load
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.tuner.lora import LoRAEmbedding
 
@@ -45,7 +45,7 @@ def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference
     return reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight, answer_weight)
 
 
-def main():
+def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("input", nargs="+")
     p.add_argument("--teacher-features", nargs="+", required=True, help="Original-reasoning features in corpus order")
@@ -69,7 +69,7 @@ def main():
     native.add_argument("--think-tokens", action="store_true", help="Tune existing <think> and </think> embeddings without adding prompt text")
     native.add_argument("--think-opening", action="store_true", help="Tune only <think>, keeping the final-answer boundary unchanged")
     p.add_argument("--seed", type=int, default=42)
-    args = p.parse_args()
+    args = p.parse_args(argv)
     args.think_tokens = args.think_tokens or args.think_opening
     output = Path(args.output)
     if output.exists():
@@ -84,7 +84,7 @@ def main():
     hidden = mx.concatenate([f["hidden"] for f, _ in features])
     cached_targets = mx.concatenate([f["targets"] for f, _ in features])
     del features
-    model, tokenizer = load(args.model)
+    model, tokenizer = loaded if loaded is not None else load(args.model)
     if model.model_type != "flint" or model.args.tie_word_embeddings:
         p.error("This recipe requires Flint's separate input embedding and output head")
     if args.think_tokens:

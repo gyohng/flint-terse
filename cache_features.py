@@ -5,14 +5,14 @@ import json
 from pathlib import Path
 
 import mlx.core as mx
-from mlx_lm import load
+from gguf_model import load_model as load
 from mlx_lm.models.cache import make_prompt_cache
 
 from corpus import BASE, configure_adapter_tokenizer, read_rows, training_tokens
 from distill import with_examples
 
 
-def main():
+def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
@@ -24,7 +24,7 @@ def main():
     p.add_argument("--start-weight", type=float, default=1, help="Weight the first eight reasoning tokens")
     p.add_argument("--answer-features", nargs="+", help="Original-reasoning features for answer preservation, in corpus order")
     p.add_argument("--original-reasoning", action="store_true", help="Use teacher_reasoning from a paired corpus")
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if Path(args.output).exists():
         p.error(f"{args.output} exists; choose a new output")
     if min(args.weight, args.start_weight) <= 0:
@@ -50,7 +50,7 @@ def main():
             ["model.embed_tokens"], ["self_attn.q_proj", "self_attn.v_proj"],
         ):
             p.error("Teacher adapters must leave the output head frozen")
-    model, tokenizer = load(args.model, adapter_path=args.adapter)
+    model, tokenizer = loaded if loaded is not None else load(args.model, adapter_path=args.adapter)
     configure_adapter_tokenizer(tokenizer, args.adapter)
     model.eval()
     close = tokenizer.convert_tokens_to_ids("</think>")
@@ -85,7 +85,7 @@ def main():
             answer = positions > closing
             first = (positions > offset) & (positions <= min(offset + 8, closing - 1))
             values = {
-                "hidden": hidden.astype(mx.float16), "targets": mx.array(ids[start + 1:end + 1]),
+                "hidden": hidden.astype(mx.float32 if Path(args.model).suffix == '.gguf' else mx.float16), "targets": mx.array(ids[start + 1:end + 1]),
                 "thought_weights": mx.where(answer, 0, weight * mx.where(first, args.start_weight, 1) / thought_mass),
                 "answer_weights": mx.where(answer, weight / (len(ids) - closing - 1), 0),
                 "weights": mx.full((end - start,), weight / (len(ids) - offset)),

@@ -298,7 +298,7 @@ def select_trace(candidates):
 
 
 def capture(args):
-    from mlx_lm import load
+    from gguf_model import load_model as load
 
     rows = read_rows(args.input)
     if args.samples < 1:
@@ -312,7 +312,12 @@ def capture(args):
 
         if args.adapter:
             raise ValueError("API evaluation uses the already merged/deployed model; omit --adapter")
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        if Path(args.tokenizer).suffix.lower() == '.gguf':
+            from gguf import GGUFReader
+            from gguf_model import tokenizer_from_gguf
+            tokenizer = tokenizer_from_gguf(GGUFReader(args.tokenizer))
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
     else:
         model, tokenizer = load(args.model, adapter_path=args.adapter)
         configure_adapter_tokenizer(tokenizer, args.adapter)
