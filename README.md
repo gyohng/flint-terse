@@ -1,12 +1,12 @@
 # flint-terse
 
-Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. The current recipe trains a small attention adapter. It adds no text to the prompt.
+Compress Flint's `<think>` into useful working notes and equations while keeping final replies fluent and complete. Train small adapters without adding text to the prompt.
 
 The older `flint-terse-prompt-half` is installed in LM Studio but unloaded. Its chat template appends a learned 17-token instruction to the user message; that caused the quoted “Think in brief working notes…” line. It is not a finished solution. No replacement has been installed yet.
 
 ## Current result
 
-**Reliable recap removal with preserved accuracy is not solved.** With the original embeddings, `adapters/correctness-base-qv` scored 43/50 but still recapped requests. Continuing it with compact-versus-verbose preferences did not fix recaps and produced irrelevant reasoning even for a greeting. `adapters/compact-preference-qv` is unsuitable for deployment. A forced bullet opening also failed. The next corpus will preserve more of Flint's native working and remove redundant passages using likelihood checks.
+**Reliable recap removal with preserved accuracy is not solved.** The attention-only candidates still recap requests. Restoring the original closing embedding in the native-token adapter kept ordinary replies in English and thinking short, but `adapters/think-opening-ablation` scored 42/50 and missed some reply constraints. It is unsuitable for deployment. The next run trains only the opening embedding with additional probability-checked native passages.
 
 These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoint, temperature 1, top-p .95, top-k 20, independent per-task seeds, batch size 8 and a 4,096-token budget:
 
@@ -17,6 +17,7 @@ These native MLX comparisons use `data/fresh-eval.jsonl`, the same INT4 checkpoi
 | `think-attention` native tokens + attention | 40/50 | 93%; loses accuracy |
 | `correctness-qv` native tokens + attention + DPO | 38/50 | 94%; loses accuracy |
 | `correctness-base-qv` original embeddings + attention + DPO | 43/50 | 23%; still recaps |
+| `think-opening-ablation` original closing embedding restored | 42/50 | 95%; loses accuracy |
 
 Captures are in `runs/fresh-{base,on-policy-qv,think-attention,correctness-qv}.jsonl`. On ten ordinary requests, `correctness-qv` completed all ten with 61% fewer thinking tokens; longer constrained requests still produced drafting loops, and its binary-search explanation misstated which half gets discarded. It has not been exported. These are development results, not independent proof of generalization. `data/release-eval.jsonl` reserves 100 unseen math/code tasks; `data/release-chat.jsonl` adds six ordinary and multistep requests. Neither has been used yet.
 
@@ -38,6 +39,8 @@ The current corpus has **410 reviewed pairs: 365 train, 45 validation**—189 ma
 There are also 349 shorter-versus-original pairs (307 train, 42 validation). The compact preference stage uses weight `.1`, alongside correctness preference weight `1`, answer KL `2` and answer supervision `1`. Both comparisons use complete responses and a frozen reference likelihood ratio.
 
 `data/expanded-prompts.jsonl` adds 880 new collection prompts: 300 math, 80 code and 500 prose. They are disjoint from the existing task IDs and exact prompts. The prose prompts come from the Apache-2.0 Smol-Magpie-Ultra, Smol-rewrite and Smol-summarize subsets of [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk); only prompts are imported, and Flint generates its own responses. These are collection inputs, not approved training examples.
+
+`data/pruned-pilot.jsonl` adds 40 reviewed pairs from a 120-example pilot: 23 math, 13 code and four prose (34 train, six validation). Final replies are unchanged. The 36 math/code examples also passed answer regeneration after the shortened thinking. The prose examples passed review and likelihood checks. All remain separate from the release sets.
 
 ## Train and evaluate
 
@@ -62,6 +65,13 @@ Using the existing `adapters/think-tokens` checkpoint as the probability teacher
 ```
 
 Choose fresh output paths when rerunning. `--iters 800 --accumulate 4` means 200 optimizer updates. Validation selects the saved checkpoint. The native-token stage is also runnable with `train-prompt --think-tokens`, reviewed paired inputs and their original-reasoning teacher features. `--think-adapter` freezes that saved stage; it cannot be combined with `--resume`. Earlier prefix and output-head experiments remain available through `train-prompt` and `train-head`.
+
+The current opening-only experiment trains 2,048 values, leaving `</think>` unchanged:
+
+```sh
+./run.sh cache-features data/on-policy-pilot.jsonl data/prose-extra-paired.jsonl data/pruned-pilot.jsonl --original-reasoning --max-tokens 16384 --output runs/opening-teacher-new.safetensors
+./run.sh train-prompt data/on-policy-pilot.jsonl data/prose-extra-paired.jsonl data/pruned-pilot.jsonl --teacher-features runs/opening-teacher-new.safetensors --think-opening --answer-kl 8 --answer-weight 1 --start-weight 3 --steps 100 --max-tokens 16384 --output adapters/opening-new
+```
 
 To run the compact preference stage, repeat the attention-training command with `--resume adapters/correctness-new --compact-preference-weight .1` and a new `--output`. Evaluate that new adapter before export.
 
