@@ -7,6 +7,7 @@ import re
 import shlex
 import statistics
 import time
+import urllib.error
 import urllib.request
 from fractions import Fraction
 from pathlib import Path
@@ -256,8 +257,18 @@ def generate_api(prompt, args, row, tokenizer):
         headers={"Content-Type": "application/json"},
     )
     start = time.perf_counter()
-    with urllib.request.urlopen(request, timeout=600) as response:
-        result = json.load(response)
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=600) as response:
+                result = json.load(response)
+            break
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode(errors='replace')
+            if error.code >= 500 and attempt < 2:
+                print(f'API {error.code}; retrying the same request: {detail}', flush=True)
+                time.sleep(attempt + 1)
+                continue
+            raise RuntimeError(f'API {error.code}: {detail}') from error
     choice = result["choices"][0]
     if args.api_chat:
         assistant = choice["message"]
@@ -308,6 +319,22 @@ def capture(args):
         raise ValueError("--api-chat requires --api")
     if args.limit:
         rows = rows[:args.limit]
+    output = Path(args.output)
+    if args.resume:
+        if not args.api or args.samples != 1:
+            raise ValueError('--resume requires single-sample API evaluation')
+        saved = read_rows(output) if output.exists() else []
+        settings = dict(model=args.model, seed=args.seed, temperature=args.temperature,
+                        max_tokens=args.max_tokens, samples=1, api=args.api,
+                        api_mode='chat' if args.api_chat else None,
+                        top_p=.95, top_k=20, min_p=0, repeat_penalty=1)
+        if len(saved) > len(rows) or any(
+            any(old.get(k) != v for k, v in {**row, **settings}.items())
+            for old, row in zip(saved, rows)
+        ):
+            raise ValueError('Saved capture does not match these tasks and evaluation settings')
+        rows = rows[len(saved):]
+        print(f'Resuming after {len(saved)} saved tasks', flush=True)
     if args.api:
         from transformers import AutoTokenizer
 
@@ -322,9 +349,8 @@ def capture(args):
     else:
         model, tokenizer = load(args.model, adapter_path=args.adapter)
         configure_adapter_tokenizer(tokenizer, args.adapter)
-    output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("x") as f:
+    with output.open('a' if args.resume else 'x') as f:
         for row in rows:
             prompt = prompt_text(row, tokenizer)
             candidates = []
@@ -342,6 +368,7 @@ def capture(args):
                 except (KeyError, ValueError):
                     assistant = {"reasoning_content": reasoning, "content": answer}
                     complete = False
+                complete = complete and bool(assistant.get('content', '').strip() or assistant.get('tool_calls'))
                 result = {
                     **row, "text": text,
                     "assistant": assistant,
@@ -575,6 +602,7 @@ def main():
             p.add_argument("--seed", type=int, default=42)
         if name == "capture":
             p.add_argument("--limit", type=int)
+            p.add_argument("--resume", action="store_true", help="Continue an interrupted API capture using the unchanged deployed model")
             p.add_argument("--samples", type=int, default=1, help="Corpus only: keep the shortest checked-correct native trace")
             p.add_argument("--api", help="Completions API, e.g. http://localhost:1234/v1")
             p.add_argument("--api-chat", action="store_true", help="Use chat/completions with structured tools, as OpenClaw does")

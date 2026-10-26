@@ -61,6 +61,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
+    p.add_argument('--resume-eval', action='store_true', help='Continue an interrupted evaluation without repeating saved tasks')
+    p.add_argument('--no-promote', action='store_true', help='Leave the candidate as flint-terse-eval for further checks')
     p.add_argument('--baseline', type=Path, help='Reuse saved baseline prefix, e.g. runs/flint-terse-base')
     p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
@@ -69,11 +71,13 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.max_change <= 0:
         p.error('--max-change must be positive')
+    if args.resume_eval and not args.evaluate_only:
+        p.error('--resume-eval requires --evaluate-only')
     if args.output.exists() and not args.evaluate_only:
         p.error(f'{args.output} exists; choose a new --output')
     for label in (('terse',) if args.baseline else ('base', 'terse')):
         for dataset in args.eval:
-            if (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
+            if not args.resume_eval and (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
                 p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
@@ -138,7 +142,7 @@ def main(argv=None, loaded=None):
             output = Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl'
             run(sys.executable, 'corpus.py', 'capture', dataset, '--api', args.api, '--api-chat',
                 '--model', identifier, '--tokenizer', model, '--temperature', 1, '--seed', 42,
-                '--max-tokens', 4096, '--output', output)
+                '--max-tokens', 4096, '--output', output, *(['--resume'] if args.resume_eval else []))
             rows = [json.loads(line) for line in output.read_text().splitlines()]
             for row in rows:
                 row.update(base_sha256=source['sha256'], context=args.context)
@@ -164,6 +168,9 @@ def main(argv=None, loaded=None):
         raise SystemExit('Ordinary-reply completion regression detected. Inspect the saved answers.')
     if not paired or after > before * .35:
         raise SystemExit('Thinking reduction is below 65%. This is not a terse release; inspect the traces.')
+    if args.no_promote:
+        print(f'Automatic checks passed for {args.output}; candidate remains flint-terse-eval for further checks.')
+        return
     run('lms', 'unload', 'flint-terse-eval')
     run('node', 'load_lmstudio.mjs', '--model', key, '--adapter', args.output,
         '--identifier', 'flint-terse', '--context', args.context)

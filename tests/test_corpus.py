@@ -1,14 +1,60 @@
 import json
+import io
+import tempfile
 import unittest
+import urllib.error
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from code_checks import check_python
-from corpus import check_answer, prefix_template
+from corpus import capture, check_answer, generate_api, prefix_template
 from make_corpus import arithmetic
 from preferences import add_preferences
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
 class CorpusTests(unittest.TestCase):
+    def test_api_retry_keeps_the_same_request(self):
+        args = SimpleNamespace(model='candidate', max_tokens=64, temperature=1, seed=42,
+                               api='http://localhost:1234/v1', api_chat=False)
+        error = urllib.error.HTTPError(args.api, 500, 'busy', {}, io.BytesIO(b'busy'))
+        response = io.BytesIO(json.dumps({'choices': [{'text': 'answer', 'finish_reason': 'stop'}],
+                                         'usage': {'completion_tokens': 1}}).encode())
+        with patch('corpus.urllib.request.urlopen', side_effect=[error, response]) as request, \
+             patch('corpus.time.sleep'):
+            self.assertEqual(generate_api('prompt', args, {}, None)[:3], ('answer', 1, 'stop'))
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[0].args[0].data, request.call_args_list[1].args[0].data)
+
+    def test_capture_resumes_without_repeating_saved_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source, output = Path(directory) / 'tasks.jsonl', Path(directory) / 'results.jsonl'
+            source.write_text(''.join(json.dumps({'id': str(i), 'messages': [{'role': 'user', 'content': str(i)}],
+                                                   'expected_number': str(i)}) + '\n' for i in (1, 2, 3)))
+            args = SimpleNamespace(input=source, output=output, model='candidate', adapter=None,
+                                   max_tokens=64, temperature=1, seed=42, samples=1, limit=1,
+                                   api='http://localhost:1234/v1', api_chat=False, tokenizer='unused', resume=False)
+            tokenizer = SimpleNamespace(encode=lambda text, **kwargs: list(text))
+            with patch('transformers.AutoTokenizer.from_pretrained', return_value=tokenizer), \
+                 patch('corpus.prompt_text', return_value='prompt'), \
+                 patch('corpus.generate_api', side_effect=[('<think>x</think>1', 3, 'stop', 0, None),
+                                                          ('<think>x</think>2', 3, 'stop', 0, None),
+                                                          ('<think>3</think>', 2, 'stop', 0, None)]) as generate:
+                capture(args)
+                prefix = output.read_bytes()
+                args.resume, args.limit = True, None
+                capture(args)
+                self.assertEqual([call.args[2]['id'] for call in generate.call_args_list], ['1', '2', '3'])
+                self.assertTrue(output.read_bytes().startswith(prefix))
+                rows = [json.loads(line) for line in output.read_text().splitlines()]
+                self.assertEqual(len(rows), 3)
+                self.assertFalse(rows[-1]['complete'])
+                self.assertFalse(rows[-1]['correct'])
+                args.seed = 43
+                with self.assertRaises(ValueError):
+                    capture(args)
+
     def test_pruning_preserves_code_and_selects_only_original_passages(self):
         code = '```python\nx = 1.25\n\nprint("Done. Next.")\n```'
         source = 'We need answer. Compute 2.5 * 4 = 10.\n\n' + code + '\n\nDone.'
