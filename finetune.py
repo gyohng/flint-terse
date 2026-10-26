@@ -184,8 +184,8 @@ def main(argv=None, loaded=None):
     prose = [(b, t) for b, t in zip(base, terse) if b['correct'] is None]
     if sum(t['complete'] for _, t in prose) < sum(b['complete'] for b, _ in prose):
         raise SystemExit('Ordinary-reply completion regression detected. Inspect the saved answers.')
-    if not paired or after > before * .35:
-        raise SystemExit('Thinking reduction is below 65%. This is not a terse release; inspect the traces.')
+    if not paired or after * 100 >= before * 30:
+        raise SystemExit('Thinking reduction must exceed 70%. This is not a terse release; inspect the traces.')
     if args.no_promote:
         print(f'Automatic checks passed for {args.output}; candidate remains flint-terse-eval for further checks.')
         return
