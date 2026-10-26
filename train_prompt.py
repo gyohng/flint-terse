@@ -65,9 +65,12 @@ def main():
     p.add_argument("--prompt-role", choices=("system", "developer", "user"), default="system")
     p.add_argument("--max-tokens", type=int, default=16384)
     p.add_argument("--init-text", default="Brief thoughts. Full answers.")
-    p.add_argument("--think-tokens", action="store_true", help="Tune existing <think> and </think> embeddings without adding prompt text")
+    native = p.add_mutually_exclusive_group()
+    native.add_argument("--think-tokens", action="store_true", help="Tune existing <think> and </think> embeddings without adding prompt text")
+    native.add_argument("--think-opening", action="store_true", help="Tune only <think>, keeping the final-answer boundary unchanged")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
+    args.think_tokens = args.think_tokens or args.think_opening
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new output")
@@ -85,7 +88,7 @@ def main():
     if model.model_type != "flint" or model.args.tie_word_embeddings:
         p.error("This recipe requires Flint's separate input embedding and output head")
     if args.think_tokens:
-        token_names = ["<think>", "</think>"]
+        token_names = ["<think>"] if args.think_opening else ["<think>", "</think>"]
         token_ids = initial_ids = [tokenizer.convert_tokens_to_ids(t) for t in token_names]
         args.init_text = args.prompt_role = None
     else:
@@ -98,6 +101,8 @@ def main():
     resumed = None
     if args.resume:
         previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
+        if args.think_tokens and previous.get("think_opening", False) != args.think_opening:
+            p.error("Resumed adapter must tune the same thinking boundaries")
         expected = {"model": args.model, "think_tokens": True} if args.think_tokens else {
             "model": args.model, "prompt_role": args.prompt_role,
             "init_text": args.init_text, "prompt_tokens": token_names}

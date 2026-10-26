@@ -232,23 +232,24 @@ class TrainingTests(unittest.TestCase):
         self.assertTrue(bool((fused.weight[unchanged] == original[unchanged]).all()))
         self.assertLess(mx.max(mx.abs(fused(mx.arange(128)) - embedding(mx.arange(128)))).item(), 1e-5)
 
-    def test_native_thinking_tokens_train_both_boundaries_without_prompt_text(self):
-        model = tiny_flint()
-        embedding, initial = adapt_prompt(model, [6, 7], [6, 7])
-        self.assertTrue(bool((embedding.lora_b == 0).all()))
-        prompt = [2, 3, 4] * 5
-        inputs, targets = mx.array([[5, 6, 42, 7, 11]]), mx.array([[6, 42, 7, 11, 1]])
-        model.train()
-        with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
-            cache = prefix_cache(model, prompt)
-            reference = nn.log_softmax(model(mx.array([prompt + inputs[0].tolist()]))[:, len(prompt) + 3:], axis=-1)
-            _, grads = nn.value_and_grad(model, prompt_loss)(model, inputs, targets, cache, 0, 2, reference, 2, 3, 1)
-            change = grads["model"]["embed_tokens"]["lora_b"]
-            self.assertTrue(bool((mx.linalg.norm(change, axis=-1) > 0).all()))
-            embedding.lora_b = -.1 * change
-            fused = embedding.fuse(dequantize=True)
-            other = mx.array([i for i in range(128) if i not in (6, 7)])
-            self.assertTrue(bool((fused(other) == embedding.embedding(other)).all()))
+    def test_native_thinking_embedding_gradients_and_fusion_preserve_untuned_rows(self):
+        for token_ids in ([6], [6, 7]):
+            model = tiny_flint()
+            embedding, initial = adapt_prompt(model, token_ids, token_ids)
+            self.assertTrue(bool((embedding.lora_b == 0).all()))
+            prompt = [2, 3, 4] * 5
+            inputs, targets = mx.array([[5, 6, 42, 7, 11]]), mx.array([[6, 42, 7, 11, 1]])
+            model.train()
+            with patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
+                cache = prefix_cache(model, prompt)
+                reference = nn.log_softmax(model(mx.array([prompt + inputs[0].tolist()]))[:, len(prompt) + 3:], axis=-1)
+                _, grads = nn.value_and_grad(model, prompt_loss)(model, inputs, targets, cache, 0, 2, reference, 2, 3, 1)
+                change = grads["model"]["embed_tokens"]["lora_b"]
+                self.assertTrue(bool((mx.linalg.norm(change, axis=-1) > 0).all()))
+                embedding.lora_b = -.1 * change
+                fused = embedding.fuse(dequantize=True)
+                other = mx.array([i for i in range(128) if i not in token_ids])
+                self.assertTrue(bool((fused(other) == embedding.embedding(other)).all()))
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "adapter_config.json").write_text(json.dumps({"think_tokens": True, "prompt_tokens": []}))
             tokenizer = SimpleNamespace(chat_template="original")
