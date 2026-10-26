@@ -1,0 +1,45 @@
+{
+  "input": [
+    "data/on-policy-pilot.jsonl",
+    "data/prose-extra-paired.jsonl",
+    "data/pruned-pilot.jsonl"
+  ],
+  "teacher_features": [
+    "/Users/george/CODE/AGENTDEV/flint-terse/runs/flint-teacher-f59kj8c_/features.safetensors"
+  ],
+  "model": "/Users/george/CODE/AGENTDEV/flint-terse/models/flint-int4-gguf/flint-int4-q4_1.gguf",
+  "output": "release/flint-terse",
+  "resume": null,
+  "checkpoint": "best",
+  "steps": 100,
+  "accumulate": 4,
+  "learning_rate": 0.001,
+  "max_change": 1,
+  "prompt_strength": 1,
+  "answer_kl": 8.0,
+  "answer_weight": 1.0,
+  "start_weight": 3.0,
+  "prompt_role": null,
+  "max_tokens": 16384,
+  "init_text": null,
+  "think_tokens": true,
+  "think_opening": true,
+  "seed": 42,
+  "fine_tune_type": "lora",
+  "num_layers": 1,
+  "prompt_tokens": [],
+  "lora_parameters": {
+    "rank": 1,
+    "scale": 1.0,
+    "dropout": 0.0,
+    "keys": [
+      "model.embed_tokens"
+    ]
+  },
+  "base_model": {
+    "repo": "RecursiveSI/flint-int4-gguf",
+    "revision": "9c47151036bc2c34331142dda04488bceab2bc9f",
+    "filename": "flint-int4-q4_1.gguf",
+    "sha256": "43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b"
+  }
+}
