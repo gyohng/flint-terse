@@ -23,15 +23,17 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
-    p.add_argument('--eval', default='data/release-eval.jsonl')
+    p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
+                                               'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
     if args.output.exists():
         p.error(f'{args.output} exists; choose a new --output')
     for label in ('base', 'terse'):
-        if (Path('runs') / f'{args.output.name}-{label}-eval.jsonl').exists():
-            p.error('Evaluation output already exists; choose a new --output name')
+        for dataset in args.eval:
+            if (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
+                p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
     from gguf import GGUFReader
@@ -79,11 +81,13 @@ def main(argv=None, loaded=None):
         command = ['node', 'load_lmstudio.mjs', '--model', key, '--adapter', args.output,
                    '--identifier', identifier, '--context', args.context]
         run(*command, *(['--base'] if label == 'base' else []))
-        output = Path('runs') / f'{args.output.name}-{label}-eval.jsonl'
-        run(sys.executable, 'corpus.py', 'capture', args.eval, '--api', args.api, '--api-chat',
-            '--model', identifier, '--tokenizer', model, '--temperature', 1, '--seed', 42,
-            '--max-tokens', 4096, '--output', output)
-        results[label] = [json.loads(line) for line in output.read_text().splitlines()]
+        results[label] = []
+        for dataset in args.eval:
+            output = Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl'
+            run(sys.executable, 'corpus.py', 'capture', dataset, '--api', args.api, '--api-chat',
+                '--model', identifier, '--tokenizer', model, '--temperature', 1, '--seed', 42,
+                '--max-tokens', 4096, '--output', output)
+            results[label].extend(json.loads(line) for line in output.read_text().splitlines())
         if label == 'base':
             run('lms', 'unload', identifier)
     base, terse = results['base'], results['terse']
@@ -92,7 +96,8 @@ def main(argv=None, loaded=None):
     paired = [(b, t) for b, t in zip(base, terse) if b['correct'] is True and t['correct'] is True]
     before = sum(b['reasoning_tokens'] for b, _ in paired)
     after = sum(t['reasoning_tokens'] for _, t in paired)
-    print(f'Checks: base {baseline}/{len(base)}, terse {adapted}/{len(terse)}. '
+    graded = sum(r['correct'] is not None for r in base)
+    print(f'Checks: base {baseline}/{graded}, terse {adapted}/{graded}. '
           f'Thinking on shared successes: {before} -> {after} tokens.', flush=True)
     if adapted < baseline:
         raise SystemExit('Quality regression detected. The adapter is experimental; inspect the saved answers.')
@@ -101,7 +106,7 @@ def main(argv=None, loaded=None):
     if not paired or after >= before:
         raise SystemExit('No thinking reduction on shared correct answers. Inspect the saved traces.')
     print(f'Adapter saved in {args.output}; loaded in LM Studio as flint-terse. '
-          'These checks do not establish unchanged quality on every task.')
+          'Review the prose captures too; these checks do not establish unchanged quality on every task.')
 
 
 if __name__ == '__main__':
