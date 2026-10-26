@@ -30,6 +30,24 @@ finally { await client[Symbol.asyncDispose](); }
     return None
 
 
+def read_baseline(prefix, datasets, source, context):
+    settings = dict(base_sha256=source['sha256'], context=context, temperature=1,
+                    seed=42, max_tokens=4096, top_p=.95, top_k=20, min_p=0,
+                    repeat_penalty=1, api_mode='chat')
+    rows = []
+    for dataset in datasets:
+        path = Path(f'{prefix}-{Path(dataset).stem}.jsonl')
+        saved = [json.loads(line) for line in path.read_text().splitlines()]
+        tasks = [json.loads(line) for line in Path(dataset).read_text().splitlines()]
+        if len(saved) != len(tasks) or any(
+            any(row.get(k) != v for k, v in {**task, **settings}.items())
+            for row, task in zip(saved, tasks)
+        ):
+            raise ValueError(f'{path}: baseline tasks, checkpoint or evaluation settings differ')
+        rows.extend(saved)
+    return rows
+
+
 def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('model', nargs='?', default=DEFAULT_MODEL, help='Local GGUF or owner/repository:filename.gguf')
@@ -41,6 +59,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
+    p.add_argument('--baseline', type=Path, help='Reuse saved baseline prefix, e.g. runs/flint-terse-base')
     p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
@@ -50,12 +69,13 @@ def main(argv=None, loaded=None):
         p.error('--max-change must be positive')
     if args.output.exists() and not args.evaluate_only:
         p.error(f'{args.output} exists; choose a new --output')
-    for label in ('base', 'terse'):
+    for label in (('terse',) if args.baseline else ('base', 'terse')):
         for dataset in args.eval:
             if (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
                 p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
+    results = {'base': read_baseline(args.baseline, args.eval, source, args.context)} if args.baseline else {}
     if args.evaluate_only:
         config = json.loads((args.output / 'adapter_config.json').read_text())
         if config['base_model']['sha256'] != source['sha256']:
@@ -89,7 +109,7 @@ def main(argv=None, loaded=None):
         config['base_model'] = source
         config_file.write_text(json.dumps(config, indent=2) + '\n')
         run(sys.executable, 'export_adapter.py', '--adapter', args.output, '--model', model)
-    if sha256(model) != source['sha256']:
+    if not args.evaluate_only and sha256(model) != source['sha256']:
         raise RuntimeError('Base GGUF changed during training')
 
     # Symlink into the library if this exact file is not already indexed there.
@@ -99,8 +119,9 @@ def main(argv=None, loaded=None):
         key = lmstudio_key(model)
         if key is None:
             raise RuntimeError('Imported GGUF is not indexed by LM Studio yet; retry with --evaluate-only')
-    results = {}
-    for label in ('base', 'terse'):
+    if args.baseline:
+        print(f'Reusing baseline: {args.baseline}', flush=True)
+    for label in (('terse',) if args.baseline else ('base', 'terse')):
         identifier = 'flint-base-eval' if label == 'base' else 'flint-terse'
         command = ['node', 'load_lmstudio.mjs', '--model', key, '--adapter', args.output,
                    '--identifier', identifier, '--context', args.context]
@@ -111,7 +132,11 @@ def main(argv=None, loaded=None):
             run(sys.executable, 'corpus.py', 'capture', dataset, '--api', args.api, '--api-chat',
                 '--model', identifier, '--tokenizer', model, '--temperature', 1, '--seed', 42,
                 '--max-tokens', 4096, '--output', output)
-            results[label].extend(json.loads(line) for line in output.read_text().splitlines())
+            rows = [json.loads(line) for line in output.read_text().splitlines()]
+            for row in rows:
+                row.update(base_sha256=source['sha256'], context=args.context)
+            output.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
+            results[label].extend(rows)
         if label == 'base':
             run('lms', 'unload', identifier)
     base, terse = results['base'], results['terse']

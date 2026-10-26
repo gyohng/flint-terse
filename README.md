@@ -25,7 +25,7 @@ As a controlled comparison, the original MLX-trained `adapters/opening-pruned` a
 
 Output goes to `release/flint-terse`: the FP32 adapter in GGUF and Safetensors, its configuration identifying the exact base, and a Jinja override removing only `| replace("\x00", "")`. No instruction is appended to the prompt. The base GGUF stays untouched. The loaded model identifier is **`flint-terse`**.
 
-If deployment fails after training, use `./run.sh finetune --evaluate-only` to evaluate the saved adapter without retraining. Existing evaluation files are never overwritten.
+If deployment fails after training, use `./run.sh finetune --evaluate-only` to evaluate the saved adapter without retraining. Existing evaluation files are never overwritten. Reuse an existing baseline with `--baseline runs/flint-terse-base`; the script checks the checkpoint hash, tasks, context length and sampling settings, then evaluates only the adapter. Use the same inference runtime as the saved baseline. For example: `./run.sh finetune --evaluate-only --output adapters/gguf-tight --baseline runs/flint-terse-base`.
 
 For redeployment, copy that small directory, download/import the matching original GGUF in LM Studio, and run:
 
