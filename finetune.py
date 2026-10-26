@@ -38,12 +38,16 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
+    p.add_argument('--max-change', type=float, default=1,
+                   help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
+    if args.max_change <= 0:
+        p.error('--max-change must be positive')
     if args.output.exists() and not args.evaluate_only:
         p.error(f'{args.output} exists; choose a new --output')
     for label in ('base', 'terse'):
@@ -75,7 +79,8 @@ def main(argv=None, loaded=None):
                 '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
             train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
                 '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
-                '--steps', str(args.steps), '--max-tokens', '16384', '--output', str(args.output)], loaded=loaded)
+                '--steps', str(args.steps), '--max-change', str(args.max_change),
+                '--max-tokens', '16384', '--output', str(args.output)], loaded=loaded)
         del loaded
         gc.collect()
         mx.clear_cache()
