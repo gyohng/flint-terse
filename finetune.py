@@ -16,12 +16,17 @@ def run(*args):
 
 
 def lmstudio_key(model):
-    listing = json.loads(subprocess.check_output(['lms', 'ls', '--variants', '--json']))
+    script = """
+import { LMStudioClient } from './.tools/lms-sdk/node_modules/@lmstudio/sdk/dist/index.mjs';
+const client = new LMStudioClient();
+try { console.log(JSON.stringify(await client.system.listDownloadedModels())); }
+finally { await client[Symbol.asyncDispose](); }
+"""
+    listing = json.loads(subprocess.check_output(['node', '--input-type=module', '-e', script]))
     for entry in listing:
-        for variant in entry.get('variants', [entry]):
-            path = str(variant.get('indexedModelIdentifier', '')).split('@')[-1]
-            if (Path.home() / '.lmstudio/models' / path).resolve() == model.resolve():
-                return variant['modelKey']
+        path = Path.home() / '.lmstudio/models' / entry['indexedModelIdentifier'].split('@')[-1]
+        if path.is_file() and path.samefile(model):
+            return entry['modelKey']
     return None
 
 
