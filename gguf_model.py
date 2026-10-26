@@ -51,18 +51,35 @@ def repack(tensor):
     scales = np.empty((weights.shape[0], width // 32), np.float32)
     biases = np.empty_like(scales)
     wflat, sflat, bflat = weights.reshape(-1), scales.reshape(-1), biases.reshape(-1)
-    for start in range(0, len(blocks), 4096):
-        chunk = blocks[start:start + 4096]
-        q, s, b, _, group = unpack(chunk, tensor.tensor_type)
-        # Check every coefficient against llama.cpp's GGUF reference decoder.
-        decoded = (q.reshape(len(chunk), -1, group).astype(np.float32) * s[..., None] + b[..., None]).reshape(-1)
-        expected = gguf.dequantize(chunk, tensor.tensor_type).reshape(-1)
-        if not np.array_equal(decoded, expected):
-            raise ValueError(f"Coefficient mismatch in {tensor.name}, block {start}")
-        if padded:
-            q = np.pad(q.reshape(-1, 16), ((0, 0), (0, 16)), constant_values=32).reshape(len(chunk), -1)
+    chunk_size = 32768 if tensor.tensor_type == gguf.GGMLQuantizationType.Q4_1 else 4096
+    for start in range(0, len(blocks), chunk_size):
+        chunk = blocks[start:start + chunk_size]
         per_word = 32 // bits
-        packed = np.bitwise_or.reduce(q.reshape(-1, per_word).astype(np.uint32) << (np.arange(per_word, dtype=np.uint32) * bits), axis=-1)
+        if tensor.tensor_type == gguf.GGMLQuantizationType.Q4_1:
+            # Rearrange nibbles directly, then invert the permutation to verify every code.
+            q = chunk[:, 4:]
+            lo = (q[:, ::2] & 15) | ((q[:, 1::2] & 15) << 4)
+            hi = (q[:, ::2] >> 4) | (q[:, 1::2] & 240)
+            restored = np.empty_like(q)
+            restored[:, ::2] = (lo & 15) | ((hi & 15) << 4)
+            restored[:, 1::2] = (lo >> 4) | (hi & 240)
+            if not np.array_equal(q, restored):
+                raise ValueError(f"Integer code mismatch in {tensor.name}, block {start}")
+            packed = np.concatenate((lo, hi), axis=1).view(np.uint32).reshape(-1)
+            # Every FP16 scale/offset is exactly representable in FP32.
+            s = chunk[:, :2].copy().view(np.float16).astype(np.float32)
+            b = chunk[:, 2:4].copy().view(np.float16).astype(np.float32)
+            group = 32
+        else:
+            q, s, b, _, group = unpack(chunk, tensor.tensor_type)
+            # Check every coefficient against llama.cpp's GGUF reference decoder.
+            decoded = (q.reshape(len(chunk), -1, group).astype(np.float32) * s[..., None] + b[..., None]).reshape(-1)
+            expected = gguf.dequantize(chunk, tensor.tensor_type).reshape(-1)
+            if not np.array_equal(decoded, expected):
+                raise ValueError(f"Coefficient mismatch in {tensor.name}, block {start}")
+            if padded:
+                q = np.pad(q.reshape(-1, 16), ((0, 0), (0, 16)), constant_values=32).reshape(len(chunk), -1)
+            packed = np.bitwise_or.reduce(q.reshape(-1, per_word).astype(np.uint32) << (np.arange(per_word, dtype=np.uint32) * bits), axis=-1)
         wstart = start * block_size * (2 if padded else 1) // per_word
         sstart = start * block_size // group
         wflat[wstart:wstart + packed.size] = packed
