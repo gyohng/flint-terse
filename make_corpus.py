@@ -98,7 +98,7 @@ def code_rows(limit=200):
     return prompts, holdout
 
 
-def chat_rows(subset, count, rng):
+def chat_rows(subset, count, rng, used_ids, used_prompts):
     """Import prompts only; Flint supplies its own reasoning and final reply."""
     def page(offset, length=100):
         query = urllib.parse.urlencode({"dataset": "HuggingFaceTB/smoltalk", "config": subset,
@@ -126,7 +126,10 @@ def chat_rows(subset, count, rng):
             word_counts = re.findall(r"\b(\d[\d,]*)[ -]+words?\b", text, re.I)
             if any(int(n.replace(",", "")) > 350 for n in word_counts):
                 continue
-            result.append({"id": f"{subset}-{item['row_idx']}", "family": "prose",
+            identity = f"{subset}-{item['row_idx']}"
+            if identity in used_ids or json.dumps(messages, sort_keys=True) in used_prompts:
+                continue
+            result.append({"id": identity, "family": "prose",
                            "source": "HuggingFaceTB/smoltalk/" + subset, "messages": messages})
             if len(result) == count:
                 return result
@@ -145,7 +148,7 @@ def expand_corpus(output):
     code = [r for r in code if r["id"] not in used_ids][:80]
     rng = random.Random(20261026)
     chat = [r for subset, count in (("smol-magpie-ultra", 200), ("smol-rewrite", 150), ("smol-summarize", 150))
-            for r in chat_rows(subset, count, rng)]
+            for r in chat_rows(subset, count, rng, used_ids, used_prompts)]
     rows = []
     for row in math + code + chat:
         prompt = json.dumps(row["messages"], sort_keys=True)
