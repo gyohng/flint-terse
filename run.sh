@@ -70,13 +70,13 @@ PY
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download
-# README.md contains the complete teacher and attention-training recipe.
-./run.sh train --help
-./run.sh capture data/direct-eval.jsonl --adapter adapters/terse --output runs/direct-check.jsonl
+# README.md contains the opening-only training recipe and attention alternatives.
+./run.sh train-prompt --help
+./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-pruned --output runs/direct-check.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --adapter adapters/terse --output runs/terse.jsonl
 ./run.sh compare runs/base.jsonl runs/terse.jsonl
-# Export only after reviewing the evaluations; current recap-removal candidates regress on accuracy.
+# Review accuracy and final replies before exporting; the installed build is experimental.
 ./run.sh export --adapter adapters/terse --output models/flint-terse-Q8_0.gguf --install
 
 Corpus building:
