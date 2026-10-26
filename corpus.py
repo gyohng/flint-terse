@@ -241,6 +241,7 @@ def generate_api(prompt, args, row, tokenizer):
     body = {
         "model": args.model, "max_tokens": args.max_tokens,
         "temperature": args.temperature, "top_p": 0.95, "top_k": 20, "seed": args.seed,
+        "min_p": 0.0, "repeat_penalty": 1.0, "presence_penalty": 0.0, "frequency_penalty": 0.0,
     }
     endpoint = "/chat/completions" if args.api_chat else "/completions"
     if args.api_chat:
@@ -351,6 +352,7 @@ def capture(args):
                     "model": args.model, "adapter": args.adapter, "seed": sample_args.seed,
                     "samples": args.samples,
                     "temperature": args.temperature, "max_tokens": args.max_tokens,
+                    "top_p": 0.95, "top_k": 20, "min_p": 0.0, "repeat_penalty": 1.0,
                     "api": args.api, "api_mode": "chat" if args.api_chat else None,
                 }
                 if ending is not None and finish == "stop":
@@ -470,7 +472,7 @@ def compare(args):
     for a, b in zip(left, right):
         if a.get("sampling_batch_size", 1) != b.get("sampling_batch_size", 1):
             raise ValueError(f"{a['id']}: different generation batch sizes")
-        keys = ("messages", "tools", "expected", "expected_number", "expected_tool", "expected_json", "tests", "test_imports", "seed", "temperature", "max_tokens", "independent_seeds")
+        keys = ("messages", "tools", "expected", "expected_number", "expected_tool", "expected_json", "tests", "test_imports", "seed", "temperature", "top_p", "top_k", "min_p", "repeat_penalty", "max_tokens", "independent_seeds")
         if not args.cross_runtime:
             keys += ("model", "api", "api_mode")
         for key in keys:

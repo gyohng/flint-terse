@@ -61,6 +61,7 @@ def main():
             thinking += sum(t["reasoning_tokens"] for t in turns)
             f.write(json.dumps({"id": episode["id"], "correct": correct, "turns": turns,
                                 "model": args.model, "temperature": args.temperature,
+                                "top_p": 0.95, "top_k": 20, "min_p": 0.0, "repeat_penalty": 1.0,
                                 "max_tokens": args.max_tokens, "seed": args.seed}, ensure_ascii=False) + "\n")
             f.flush()
             print(f"{episode['id']}: {'passed' if correct else 'failed'}; {len(turns)} turns", flush=True)
