@@ -5,7 +5,7 @@ import { LMStudioClient } from './.tools/lms-sdk/node_modules/@lmstudio/sdk/dist
 
 const { values } = parseArgs({ options: {
   model: { type: 'string' },
-  adapter: { type: 'string', default: 'release/flint-terse' },
+  adapter: { type: 'string', default: 'adapters/flint-terse' },
   identifier: { type: 'string', default: 'flint-terse' },
   context: { type: 'string', default: '65536' },
   base: { type: 'boolean', default: false },

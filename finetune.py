@@ -54,7 +54,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--revision', help='Hugging Face revision; the default checkpoint is pinned')
     p.add_argument('--model-dir', action='append', default=[], help='Additional local model search directory')
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
-    p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
+    p.add_argument('--output', type=Path, default=Path('adapters/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--method', choices=('opening', 'attention'), default='opening')
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
