@@ -59,6 +59,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
                    help='Adapt the opening token, both thinking boundaries, or attention projections')
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
+    p.add_argument('--preference-weight', type=float, default=0,
+                   help='Attention training: prefer checked correct responses over labeled mistakes')
     p.add_argument('--adapter-scale', type=float, default=1,
                    help='Multiply the learned update at export without changing its FP32 matrices')
     p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
@@ -78,6 +80,8 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.learning_rate is None:
         args.learning_rate = .000005 if args.method == 'attention' else .001
+    if args.preference_weight < 0 or (args.preference_weight and args.method != 'attention'):
+        p.error('--preference-weight must be nonnegative and requires --method attention')
     if not args.evaluate_only and args.method == 'attention' and args.max_change != 1:
         p.error('--max-change applies only to opening training')
     if args.max_change <= 0:
@@ -126,6 +130,7 @@ def main(argv=None, loaded=None):
                 train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                    '--preference-weight', str(args.preference_weight),
                     '--layers', str(args.layers), '--rank', '8', '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)

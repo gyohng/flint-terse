@@ -34,12 +34,15 @@ The unchanged official base scores **86/100**. These comparisons reuse its saved
 | All-layer attention | 60/92 (base 78/92) | 94.8% | Stopped for accuracy loss |
 | All-layer attention at half strength | 89/100 | 62.1% | Interval example failed; Python request used 408 thinking tokens |
 | Repaired opening at 90% strength | 84/100 | 68.3% | 16/16 ordinary replies completed; interval check passed; Python request used 5 thinking tokens |
+| Both thinking boundaries, with casual examples | 82/100 | 81.8% | Python request used 4 thinking tokens; 95% strength also scored 82/100 |
 
 Thinking reductions above use shared correct math/code answers. The pipeline also includes the interval-merging check in its final compression gate; the 90%-strength opening adapter reached 65.9% there. Scores on partial runs are not 100-task results. None of these candidates meets all release checks yet.
 
 `--method attention` trains query/value LoRA directly from the unchanged base; `--layers N` sets its depth (Flint has 49 layers). `--initial-adapter PATH` can keep an existing thinking-token update frozen during attention training. `--adapter-scale` adjusts the exported update strength without changing the FP32 matrices or base weights. `--method tokens` adapts both `<think>` and `</think>` embeddings. Final replies containing thinking delimiters fail the release check, even if aggregate completion counts improve.
 
 `data/casual-paired.jsonl` adds 29 reviewed examples (23 training, six validation) for greetings, vague requests and small code examples. Their final replies are unchanged from the official GGUF; only the working notes are shortened. Three collected replies were excluded during review.
+
+For attention training, `--preference-weight 1` adds the existing DPO objective against checked incorrect responses in the adaptive corpus. The reference is the frozen starting model, including any thinking-token adapter supplied with `--initial-adapter`.
 
 Output goes to `adapters/flint-terse`: the FP32 adapter in GGUF and Safetensors, its configuration identifying the exact base, and a Jinja override removing only `| replace("\x00", "")`. This leaves the checked-in release files untouched. No instruction is appended to the prompt. The base GGUF stays untouched. The loaded model identifier is **`flint-terse`**.
 
