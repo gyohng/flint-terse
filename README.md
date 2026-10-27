@@ -38,7 +38,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 
 `--steps` counts optimizer updates, each accumulating four examples. Validation selects the saved checkpoint. `--no-promote` keeps evaluation under `flint-terse-eval`.
 
-The attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/style-retention.jsonl` has 103 prose/tool examples and 336 math/code retention examples; it is used for the current style refinement. The original few examples were insufficient.
+The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/style-retention.jsonl` now has 190 prose/tool examples and 389 math/code retention examples. Its 200 code responses come from the accurate attention adapter and pass their tests; the 87 added prose wording variants keep final replies unchanged. The original few examples were insufficient.
 
 To extend the corpus:
 
