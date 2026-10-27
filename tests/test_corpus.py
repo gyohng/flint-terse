@@ -11,11 +11,29 @@ from code_checks import check_python
 from corpus import capture, check_answer, generate_api, prefix_template
 from finetune import accuracy_can_pass
 from make_corpus import arithmetic
-from preferences import add_preferences, repair_answers
+from preferences import add_preferences, repair_answers, retain_policy
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
 class CorpusTests(unittest.TestCase):
+    def test_policy_retention_keeps_checked_generated_notes_and_answers(self):
+        row = {'id': 'code', 'messages': [{'role': 'user', 'content': 'Double x.'}], 'split': 'train',
+               'tests': ['assert f(2) == 4', 'assert f(3) == 6'], 'teacher_reasoning': 'old',
+               'assistant': {'reasoning_content': 'old', 'content': 'def f(x): return 2*x'}}
+        good = {'id': 'code', 'messages': row['messages'], 'complete': True, 'output_tokens': 15,
+                'text': '<think>Add x to itself.</think>def f(x): return x+x'}
+        wrong = {**good, 'correct': True, 'output_tokens': 10,
+                 'text': '<think>Square.</think>def f(x): return x*x'}
+        incomplete = {**good, 'complete': False, 'output_tokens': 1}
+        result = retain_policy([row], [wrong, incomplete, good])
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0]['preserve_only'])
+        self.assertTrue(result[0]['approved'])
+        self.assertEqual(result[0]['assistant'], {'reasoning_content': 'Add x to itself.', 'content': 'def f(x): return x+x'})
+        self.assertNotIn('teacher_reasoning', result[0])
+        with self.assertRaisesRegex(ValueError, 'prompt differs'):
+            retain_policy([row], [{**good, 'messages': []}])
+
     def test_accuracy_margin_covers_the_whole_selected_test_set(self):
         for total, baseline, done, correct, ungraded, expected in [
             (100, 86, 89, 74, 0, True),

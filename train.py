@@ -304,7 +304,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         logits = model.lm_head(hidden).astype(mx.float32)
         if preserve:
             divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
-            return args.kl * .5 * (divergence.mean() + divergence[:, :8].mean())
+            weight = getattr(args, 'retention_kl', None)
+            return (args.kl if weight is None else weight) * .5 * (divergence.mean() + divergence[:, :8].mean())
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
                                 args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only)
@@ -385,6 +386,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--targets", nargs="+", default=["self_attn.q_proj", "self_attn.v_proj"])
     p.add_argument("--learning-rate", type=float, default=1e-5)
     p.add_argument("--kl", type=float, default=0.1)
+    p.add_argument('--retention-kl', type=float, help='Separate KL weight for preserve_only rows; defaults to --kl')
     p.add_argument("--kl-scope", choices=("answer", "all"), default="answer")
     p.add_argument("--max-tokens", type=int, default=2048)
     p.add_argument("--batch-size", type=int, default=1)
@@ -401,6 +403,8 @@ def main(argv=None, loaded=None):
         p.error('--narration-penalty requires paired reasoning supervision and a nonnegative weight')
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
+    if args.retention_kl is not None and (args.retention_kl < 0 or not args.paired):
+        p.error('--retention-kl requires paired training and a nonnegative weight')
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):
         p.error("Start weight must be positive and answer weight nonnegative; --paired requires --teacher-features")
     if (min(args.preference_weight, args.compact_preference_weight) < 0 or args.preference_beta <= 0

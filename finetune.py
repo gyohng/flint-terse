@@ -87,6 +87,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--teacher-adapter', help='Fixed reference for same-prefix probability retention')
     p.add_argument('--narration-penalty', type=float, default=0,
                    help='Attention training: discourage stock narration at the start of supervised thinking')
+    p.add_argument('--retention-kl', type=float, default=8, help='KL weight for math/code policy retention')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
@@ -105,6 +106,8 @@ def main(argv=None, loaded=None):
         p.error('--same-prefix-teacher requires --resume-adapter without compact preferences')
     if args.teacher_adapter and not args.same_prefix_teacher:
         p.error('--teacher-adapter requires --same-prefix-teacher')
+    if args.retention_kl < 0:
+        p.error('--retention-kl must be nonnegative')
     if args.narration_penalty < 0 or (args.narration_penalty and (args.method != 'attention' or args.answer_only)):
         p.error('--narration-penalty requires attention reasoning supervision and a nonnegative weight')
     if args.attention_adapter and (args.method != 'opening' or args.initial_adapter or args.resume_adapter):
@@ -198,6 +201,7 @@ def main(argv=None, loaded=None):
                     *(['--same-prefix-teacher'] if args.same_prefix_teacher else []),
                     *(['--teacher-adapter', args.teacher_adapter] if args.teacher_adapter else []),
                     '--narration-penalty', str(args.narration_penalty),
+                    '--retention-kl', str(args.retention_kl),
                     *(['--train-layers', str(args.train_layers)] if args.train_layers is not None else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--preference-weight', str(args.preference_weight),
