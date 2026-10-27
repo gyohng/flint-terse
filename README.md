@@ -42,7 +42,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 
 The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/direct-prose.jsonl` trains 139 simple writing/conversation examples with a one-token note (`—`) and 26 tool examples with short notes. Its 426 retention examples protect math, code, technical explanations and plans using the starting adapter’s probabilities. Reviewed final replies stay unchanged. All 212 code responses pass their tests; 62 also have checked incorrect alternatives for preference training. The 87 prose wording variants keep final replies unchanged. The original few examples were insufficient.
 
-`data/code-prose-paired.jsonl` adds 32 conversational function requests with explanations and usage examples. Their short notes retain algorithms and edge cases. Implementations pass executable checks; final replies were reviewed, including two corrections to the teacher's explanatory text.
+`data/code-prose-paired.jsonl` adds 32 distinct conversational coding tasks, each in three phrasings. Variants share checked implementations, short algorithm notes and reviewed final replies, and stay in their parent's train/validation split. These are 96 examples, not 96 independent tasks.
 
 To extend the corpus:
 
