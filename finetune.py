@@ -15,6 +15,27 @@ def run(*args):
     subprocess.run([str(a) for a in args], check=True)
 
 
+def scale_adapter(folder, strength):
+    config_file = Path(folder) / 'adapter_config.json'
+    config = json.loads(config_file.read_text())
+    frozen = config.get('frozen_rank', 0)
+    if frozen and strength != 1:
+        import numpy as np
+        from safetensors.numpy import load_file, save_file
+        path = Path(folder) / 'adapters.safetensors'
+        weights = load_file(path)
+        if any(value.dtype != np.float32 for value in weights.values()):
+            raise ValueError('Keep adapter factors in FP32')
+        for name, value in weights.items():
+            if name.endswith('.lora_b'):
+                value[frozen:] *= np.float32(strength)
+        save_file(weights, path)
+    elif not frozen:
+        config['lora_parameters']['scale'] *= strength
+    config['adapter_scale'] = config.get('adapter_scale', 1) * strength
+    config_file.write_text(json.dumps(config, indent=2) + '\n')
+
+
 def lmstudio_key(model):
     script = """
 import { LMStudioClient } from './.tools/lms-sdk/node_modules/@lmstudio/sdk/dist/index.mjs';
@@ -83,7 +104,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--answer-only', action='store_true',
                    help='Attention training: repair final answers without imitating the sampled reasoning')
     p.add_argument('--adapter-scale', type=float,
-                   help='Multiply the learned update at export without changing its FP32 matrices')
+                   help='Scale the learned update; rank-expanded adapters keep their frozen component unchanged')
     start = p.add_mutually_exclusive_group()
     start.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
     start.add_argument('--resume-adapter', help='Continue an attention adapter at its saved scale')
@@ -257,9 +278,8 @@ def main(argv=None, loaded=None):
         config_file = args.output / 'adapter_config.json'
         config = json.loads(config_file.read_text())
         config['base_model'] = source
-        config['adapter_scale'] = args.adapter_scale
-        config['lora_parameters']['scale'] *= args.adapter_scale
         config_file.write_text(json.dumps(config, indent=2) + '\n')
+        scale_adapter(args.output, args.adapter_scale)
         run(sys.executable, 'export_adapter.py', '--adapter', args.output, '--model', model)
     if not args.evaluate_only and sha256(model) != source['sha256']:
         raise RuntimeError('Base GGUF changed during training')

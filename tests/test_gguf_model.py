@@ -8,13 +8,39 @@ import gguf
 import mlx.core as mx
 from mlx.utils import tree_flatten
 import numpy as np
-from safetensors.numpy import save_file
+from safetensors.numpy import load_file, save_file
 
 from export_adapter import main as export_adapter
+from finetune import scale_adapter
 from gguf_model import GGUFLinear, repack
 
 
 class GGUFTests(unittest.TestCase):
+    def test_adapter_strength_preserves_the_frozen_component(self):
+        for frozen in (0, 2):
+            with self.subTest(frozen=frozen), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = {'lora_parameters': {'rank': 4, 'scale': 1.1}, 'frozen_rank': frozen}
+                (root / 'adapter_config.json').write_text(json.dumps(config))
+                a = np.arange(32, dtype=np.float32).reshape(8, 4) / 16
+                b = np.arange(24, dtype=np.float32).reshape(4, 6) / 16
+                path = root / 'adapters.safetensors'
+                save_file({'projection.lora_a': a, 'projection.lora_b': b}, path)
+                original = path.read_bytes()
+                scale_adapter(root, .5)
+                saved = load_file(path)
+                adjusted = json.loads((root / 'adapter_config.json').read_text())
+                self.assertEqual(adjusted['adapter_scale'], .5)
+                self.assertTrue(np.array_equal(saved['projection.lora_a'], a))
+                if frozen:
+                    self.assertEqual(adjusted['lora_parameters']['scale'], 1.1)
+                    self.assertTrue(np.array_equal(saved['projection.lora_b'][:frozen], b[:frozen]))
+                    self.assertTrue(np.array_equal(saved['projection.lora_b'][frozen:], b[frozen:] * .5))
+                    self.assertEqual(saved['projection.lora_b'].dtype, np.float32)
+                else:
+                    self.assertEqual(adjusted['lora_parameters']['scale'], .55)
+                    self.assertEqual(path.read_bytes(), original)
+
     def test_export_preserves_embedding_and_projection_updates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
