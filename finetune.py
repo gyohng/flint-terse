@@ -58,6 +58,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--method', choices=('opening', 'attention'), default='opening')
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
+    p.add_argument('--adapter-scale', type=float, default=1,
+                   help='Multiply the learned update at export without changing its FP32 matrices')
     p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
     p.add_argument('--learning-rate', type=float, help='Defaults to .001 for opening, .000005 for attention')
     p.add_argument('--max-change', type=float, default=1,
@@ -81,6 +83,8 @@ def main(argv=None, loaded=None):
         p.error('--max-change must be positive')
     if not 0 <= args.max_accuracy_drop <= 100:
         p.error('--max-accuracy-drop must be between 0 and 100')
+    if args.adapter_scale <= 0 or (args.evaluate_only and args.adapter_scale != 1):
+        p.error('--adapter-scale must be positive and applies only when training; evaluation uses the saved scale')
     if args.resume_eval and not args.evaluate_only:
         p.error('--resume-eval requires --evaluate-only')
     if args.output.exists() and not args.evaluate_only:
@@ -137,6 +141,8 @@ def main(argv=None, loaded=None):
         config_file = args.output / 'adapter_config.json'
         config = json.loads(config_file.read_text())
         config['base_model'] = source
+        config['adapter_scale'] = args.adapter_scale
+        config['lora_parameters']['scale'] *= args.adapter_scale
         config_file.write_text(json.dumps(config, indent=2) + '\n')
         run(sys.executable, 'export_adapter.py', '--adapter', args.output, '--model', model)
     if not args.evaluate_only and sha256(model) != source['sha256']:
