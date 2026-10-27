@@ -40,7 +40,7 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
-    def test_entry_supervision_changes_only_the_first_token_after_think(self):
+    def test_entry_supervision_and_answer_transition(self):
         logits = mx.zeros((1, 8, 32))
         targets = mx.array([[1, 4, 5, 6, 2, 7, 8, 3]])
         for closing in (1, 4):
@@ -53,7 +53,9 @@ class TrainingTests(unittest.TestCase):
                 self.assertEqual(mx.max(mx.abs(grad[:, 2:])).item(), 0)
                 baseline = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 0))(logits)
                 weighted = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 0, entry_weight=2))(logits)
-                self.assertLess(mx.max(mx.abs(weighted - baseline - 2 * grad)).item(), 1e-6)
+                answer = mx.grad(lambda x: nn.losses.cross_entropy(x[:, closing + 1:closing + 2],
+                    targets[:, closing + 1:closing + 2]).mean())(logits)
+                self.assertLess(mx.max(mx.abs(weighted - baseline - 2 * (grad + answer))).item(), 1e-6)
 
     def test_narration_penalty_changes_only_the_first_thinking_word(self):
         logits = mx.zeros((1, 12, 32))

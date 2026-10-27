@@ -173,6 +173,8 @@ def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=
         thought = (losses * weights).sum() / weights.sum()
     if entry_weight:
         thought += entry_weight * nn.losses.cross_entropy(logits[:, 1:2], targets[:, 1:2]).mean()
+        thought += entry_weight * nn.losses.cross_entropy(logits[:, closing + 1:closing + 2],
+                                                        targets[:, closing + 1:closing + 2]).mean()
     return thought + answer_loss(logits, targets, closing, reference, answer_kl, answer_weight)
 
 
@@ -379,7 +381,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument('--entry-only', action='store_true', help='Paired mode: supervise only the first substantive thinking token')
-    p.add_argument('--entry-weight', type=float, default=0, help='Emphasize the first token after <think>, including an immediate </think>')
+    p.add_argument('--entry-weight', type=float, default=0, help='Emphasize the first token of thinking and of the final reply')
     p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies without supervising sampled notes or the closing boundary")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
