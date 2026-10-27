@@ -36,7 +36,8 @@ The unchanged official base scores **86/100**. These comparisons reuse its saved
 | All-layer attention | 60/92 (base 78/92) | 94.8% | Stopped for accuracy loss |
 | All-layer attention at half strength | 89/100 | 62.1% | Interval example failed; Python request used 408 thinking tokens |
 | Repaired opening at 90% strength | 84/100 | 68.3% | 16/16 ordinary replies completed; interval check passed; Python request used 5 thinking tokens |
-| Both thinking boundaries, with casual examples | 82/100 | 81.8% | Python request used 4 thinking tokens; 95% strength also scored 82/100 |
+| Both thinking boundaries, with casual examples | 82/100 | 81.8% | Poem drafts leaked into the final reply; 95% strength had the same problem |
+| Both boundaries + attention correctness preferences | 67/89 (base 76/89) | 86.4% | Stopped when it could no longer beat the retained candidates |
 
 Thinking reductions above use shared correct math/code answers. The pipeline also includes the interval-merging check in its final compression gate; the 90%-strength opening adapter reached 65.9% there. Scores on partial runs are not 100-task results. None of these candidates meets all release checks yet.
 
