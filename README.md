@@ -98,7 +98,7 @@ Copy the folder to another machine and import the matching original GGUF into re
 # Optional: --model MODEL_KEY --context 65536
 ```
 
-The loaded identifier is **flint-terse**. Select its installed sampling preset for GUI chats; API requests should send the same sampling values explicitly. The preset adds no system prompt. `export-adapter` creates portable files without rewriting the base. The older `export` command merges/requantizes and is not this deployment path.
+The loaded identifier is **flint-terse**. Run the loader again after unloading or restarting LM Studio to reattach the adapter. Select its installed sampling preset for GUI chats; API requests should send the same sampling values explicitly. The preset adds no system prompt. `export-adapter` creates portable files without rewriting the base. The older `export` command merges/requantizes and is not this deployment path.
 
 ## Research
 
