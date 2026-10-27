@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, narration_loss, preference_loss, reasoning_loss, train_paired, training_attention
+from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, narration_loss, preference_loss, reasoning_loss, retention_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss, main as prompt_main
@@ -40,6 +40,18 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_retention_emphasizes_answer_entry_without_locking_thinking_openings(self):
+        logits = mx.zeros((1, 32, 4))
+        reference = nn.log_softmax(logits, axis=-1)
+        for closing in (4, 12):
+            with self.subTest(closing=closing):
+                self.assertEqual(retention_loss(logits, reference, closing).item(), 0)
+                losses = [retention_loss(logits.at[:, position, 0].add(2), reference, closing).item()
+                          for position in (1, closing + 1, 31)]
+                self.assertGreater(losses[0], 0)
+                self.assertAlmostEqual(losses[0], losses[2])
+                self.assertGreater(losses[1], losses[0])
+
     def test_entry_supervision_and_answer_transition(self):
         logits = mx.zeros((1, 8, 32))
         targets = mx.array([[1, 4, 5, 6, 2, 7, 8, 3]])

@@ -155,6 +155,12 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
     return answer_kl * preservation + answer_weight * answer_ce
 
 
+def retention_loss(logits, reference, closing):
+    divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
+    # Protect answer format without giving stock thinking openings extra weight.
+    return .5 * (divergence.mean() + divergence[:, closing + 1:closing + 9].mean())
+
+
 def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False, entry_only=False, entry_weight=0):
     if answer_only:
         # Sampled notes may be wrong; don't imitate them or encourage earlier closing.
@@ -314,9 +320,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None, frozen_columns=Non
         logits = model.lm_head(hidden).astype(mx.float32)
         targets = mx.array([ids[offset:]])
         if preserve:
-            divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
             weight = getattr(args, 'retention_kl', None)
-            result = (args.kl if weight is None else weight) * .5 * (divergence.mean() + divergence[:, :8].mean())
+            result = (args.kl if weight is None else weight) * retention_loss(logits, reference, closing)
         else:
             result = reasoning_loss(logits, targets, closing, reference,
                                     args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only,
