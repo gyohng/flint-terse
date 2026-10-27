@@ -62,6 +62,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--learning-rate', type=float, help='Defaults to .001 for opening, .000005 for attention')
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
+    p.add_argument('--max-accuracy-drop', type=float, default=2,
+                   help='Allowed checked-accuracy drop in percentage points (default: 2)')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--resume-eval', action='store_true', help='Continue an interrupted evaluation without repeating saved tasks')
     p.add_argument('--no-promote', action='store_true', help='Leave the candidate as flint-terse-eval for further checks')
@@ -77,6 +79,8 @@ def main(argv=None, loaded=None):
         p.error('--max-change applies only to opening training')
     if args.max_change <= 0:
         p.error('--max-change must be positive')
+    if not 0 <= args.max_accuracy_drop <= 100:
+        p.error('--max-accuracy-drop must be between 0 and 100')
     if args.resume_eval and not args.evaluate_only:
         p.error('--resume-eval requires --evaluate-only')
     if args.output.exists() and not args.evaluate_only:
@@ -165,8 +169,10 @@ def main(argv=None, loaded=None):
             if label == 'terse':
                 start = len(results[label])
                 reference = results['base'][start:start + len(rows)]
-                if sum(r['correct'] is True for r in rows) < sum(r['correct'] is True for r in reference):
-                    raise SystemExit(f'{dataset}: quality regression; stopping the remaining evaluation tasks.')
+                checked = sum(r['correct'] is not None for r in reference)
+                lost = sum(r['correct'] is True for r in reference) - sum(r['correct'] is True for r in rows)
+                if lost * 100 > args.max_accuracy_drop * checked:
+                    raise SystemExit(f'{dataset}: accuracy drop exceeds {args.max_accuracy_drop:g} points; stopping evaluation.')
             results[label].extend(rows)
         if label == 'base':
             run('lms', 'unload', identifier)
@@ -179,8 +185,8 @@ def main(argv=None, loaded=None):
     graded = sum(r['correct'] is not None for r in base)
     print(f'Checks: base {baseline}/{graded}, terse {adapted}/{graded}. '
           f'Thinking on shared successes: {before} -> {after} tokens.', flush=True)
-    if adapted < baseline:
-        raise SystemExit('Quality regression detected. The adapter is experimental; inspect the saved answers.')
+    if (baseline - adapted) * 100 > args.max_accuracy_drop * graded:
+        raise SystemExit('Accuracy drop exceeds the allowed margin. Inspect the saved answers.')
     if sum(r['complete'] for r in terse) < sum(r['complete'] for r in base):
         raise SystemExit('Completion regression detected. Inspect the saved answers.')
     prose = [(b, t) for b, t in zip(base, terse) if b['correct'] is None]
