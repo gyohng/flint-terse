@@ -40,6 +40,16 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_entry_supervision_does_not_reward_closing_or_answer_tokens(self):
+        logits = mx.zeros((1, 8, 32))
+        targets = mx.array([[1, 4, 5, 6, 2, 7, 8, 3]])
+        reference = nn.log_softmax(logits[:, 5:], axis=-1)
+        grad = mx.grad(lambda x: reasoning_loss(x, targets, 4, reference, 0, entry_only=True))(logits)
+        self.assertLess(grad[0, 1, 4].item(), 0)
+        self.assertGreater(grad[0, 1, 7].item(), 0)
+        self.assertEqual(mx.max(mx.abs(grad[:, :1])).item(), 0)
+        self.assertEqual(mx.max(mx.abs(grad[:, 2:])).item(), 0)
+
     def test_narration_penalty_changes_only_the_first_thinking_word(self):
         logits = mx.zeros((1, 12, 32))
         grad = mx.grad(lambda x: narration_loss(x, [3, 5]))(logits)

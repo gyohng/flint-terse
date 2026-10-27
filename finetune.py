@@ -87,6 +87,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--teacher-adapter', help='Fixed reference for same-prefix probability retention')
     p.add_argument('--narration-penalty', type=float, default=0,
                    help='Attention training: discourage stock narration at the start of supervised thinking')
+    p.add_argument('--entry-only', action='store_true',
+                   help='Attention training: supervise the first thinking token instead of the full notes')
     p.add_argument('--retention-kl', type=float, default=8, help='KL weight for math/code policy retention')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
@@ -110,6 +112,8 @@ def main(argv=None, loaded=None):
         p.error('--retention-kl must be nonnegative')
     if args.narration_penalty < 0 or (args.narration_penalty and (args.method != 'attention' or args.answer_only)):
         p.error('--narration-penalty requires attention reasoning supervision and a nonnegative weight')
+    if args.entry_only and (args.method != 'attention' or args.answer_only or args.narration_penalty):
+        p.error('--entry-only requires attention training without other thinking-loss overrides')
     if args.attention_adapter and (args.method != 'opening' or args.initial_adapter or args.resume_adapter):
         p.error('--attention-adapter requires --method opening without another initializer')
     if args.resume_adapter and args.method != 'attention':
@@ -201,6 +205,7 @@ def main(argv=None, loaded=None):
                     *(['--same-prefix-teacher'] if args.same_prefix_teacher else []),
                     *(['--teacher-adapter', args.teacher_adapter] if args.teacher_adapter else []),
                     '--narration-penalty', str(args.narration_penalty),
+                    *(['--entry-only'] if args.entry_only else []),
                     '--retention-kl', str(args.retention_kl),
                     *(['--train-layers', str(args.train_layers)] if args.train_layers is not None else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
