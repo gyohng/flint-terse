@@ -46,6 +46,8 @@ The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 Open
 
 `data/code-prose-extra-prompts.jsonl` contains 180 further tasks from the checked training corpus, now requesting normal explanatory replies. Recreate it at a new path with `./run.sh build-corpus --code-prose OUTPUT`. Collect and review fresh responses before pairing short notes. `batch-capture` defaults to the same pinned GGUF and supports continuous batching for this collection.
 
+`data/final-paired.jsonl` is the final expanded corpus: 699 examples, including 320 checked code answers across 212 distinct tasks. It teaches actual algorithm notes for the formal code tasks and restores useful constraint notes for writing. The 76 new conversational pairs passed native code checks, a likelihood screen against the unchanged GGUF, and code checks after regenerating answers from their short notes. Supervised examples have equal weight; math and technical-prose retention remain separate.
+
 To extend the corpus:
 
 1. Collect several native responses per **training** prompt using `capture` or `batch-capture`. Keep evaluation prompts separate.
