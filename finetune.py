@@ -48,6 +48,14 @@ def read_baseline(prefix, datasets, source, context):
     return rows
 
 
+def accuracy_can_pass(base, candidate, max_drop):
+    checked = sum(r['correct'] is not None for r in base)
+    baseline = sum(r['correct'] is True for r in base)
+    pending = sum(r['correct'] is not None for r in base[len(candidate):])
+    possible = sum(r['correct'] is True for r in candidate) + pending
+    return (baseline - possible) * 100 <= max_drop * checked
+
+
 def main(argv=None, loaded=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('model', nargs='?', default=DEFAULT_MODEL, help='Local GGUF or owner/repository:filename.gguf')
@@ -189,14 +197,10 @@ def main(argv=None, loaded=None):
             for row in rows:
                 row.update(base_sha256=source['sha256'], context=args.context)
             output.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
-            if label == 'terse':
-                start = len(results[label])
-                reference = results['base'][start:start + len(rows)]
-                checked = sum(r['correct'] is not None for r in reference)
-                lost = sum(r['correct'] is True for r in reference) - sum(r['correct'] is True for r in rows)
-                if lost * 100 > args.max_accuracy_drop * checked:
-                    raise SystemExit(f'{dataset}: accuracy drop exceeds {args.max_accuracy_drop:g} points; stopping evaluation.')
             results[label].extend(rows)
+            if label == 'terse' and not accuracy_can_pass(results['base'], results[label], args.max_accuracy_drop):
+                raise SystemExit(f'{dataset}: remaining tasks cannot keep total accuracy within '
+                                 f'{args.max_accuracy_drop:g} points; stopping evaluation.')
         if label == 'base':
             run('lms', 'unload', identifier)
     base, terse = results['base'], results['terse']
@@ -210,7 +214,7 @@ def main(argv=None, loaded=None):
     graded = sum(r['correct'] is not None for r in base)
     print(f'Checks: base {baseline}/{graded}, terse {adapted}/{graded}. '
           f'Thinking on shared successes: {before} -> {after} tokens.', flush=True)
-    if (baseline - adapted) * 100 > args.max_accuracy_drop * graded:
+    if not accuracy_can_pass(base, terse, args.max_accuracy_drop):
         raise SystemExit('Accuracy drop exceeds the allowed margin. Inspect the saved answers.')
     if sum(r['complete'] for r in terse) < sum(r['complete'] for r in base):
         raise SystemExit('Completion regression detected. Inspect the saved answers.')

@@ -9,12 +9,28 @@ from unittest.mock import patch
 
 from code_checks import check_python
 from corpus import capture, check_answer, generate_api, prefix_template
+from finetune import accuracy_can_pass
 from make_corpus import arithmetic
 from preferences import add_preferences
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
 class CorpusTests(unittest.TestCase):
+    def test_accuracy_margin_covers_the_whole_selected_test_set(self):
+        for total, baseline, done, correct, ungraded, expected in [
+            (100, 86, 89, 74, 0, True),
+            (100, 86, 89, 72, 0, False),
+            (200, 172, 100, 82, 0, True),
+            (200, 172, 200, 168, 0, True),
+            (200, 172, 200, 167, 0, False),
+            (100, 86, 100, 84, 20, True),
+            (100, 86, 100, 83, 20, False),
+        ]:
+            base = [{'correct': x} for x in [True] * baseline + [False] * (total - baseline) + [None] * ungraded]
+            candidate = [{'correct': x} for x in [True] * correct + [False] * (done - correct)]
+            with self.subTest(total=total, done=done, correct=correct, ungraded=ungraded):
+                self.assertEqual(accuracy_can_pass(base, candidate, 2), expected)
+
     def test_api_retry_keeps_the_same_request(self):
         args = SimpleNamespace(model='candidate', max_tokens=64, temperature=1, seed=42,
                                api='http://localhost:1234/v1', api_chat=False)
