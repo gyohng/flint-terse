@@ -55,7 +55,9 @@ class TrainingTests(unittest.TestCase):
                 weighted = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 0, entry_weight=2))(logits)
                 answer = mx.grad(lambda x: nn.losses.cross_entropy(x[:, closing + 1:closing + 2],
                     targets[:, closing + 1:closing + 2]).mean())(logits)
-                self.assertLess(mx.max(mx.abs(weighted - baseline - 2 * (grad + answer))).item(), 1e-6)
+                transition = mx.grad(lambda x: nn.losses.cross_entropy(x[:, closing:closing + 1],
+                    targets[:, closing:closing + 1]).mean())(logits) if closing > 1 else 0
+                self.assertLess(mx.max(mx.abs(weighted - baseline - 2 * (grad + transition + answer))).item(), 1e-6)
 
     def test_narration_penalty_changes_only_the_first_thinking_word(self):
         logits = mx.zeros((1, 12, 32))

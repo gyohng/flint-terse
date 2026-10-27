@@ -96,7 +96,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--entry-only', action='store_true',
                    help='Attention training: supervise the first thinking token instead of the full notes')
     p.add_argument('--entry-weight', type=float, default=0,
-                   help='Attention training: emphasize the first token of thinking and of the final reply')
+                   help='Attention training: emphasize thinking entry, its closing marker, and answer entry')
     p.add_argument('--retention-kl', type=float, default=8, help='KL weight for math/code policy retention')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
