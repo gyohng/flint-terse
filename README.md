@@ -31,7 +31,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 - `--method attention --layers 49` trains rank-8 query/value LoRA. `--resume-adapter PATH` continues a compatible adapter at its saved scale; `--train-layers 8` can freeze its earlier layers.
 - `--same-prefix-teacher`, with attention resumption, preserves answer probabilities after the compact notes. Rows marked `preserve_only` match the starting policy throughout the response.
 - `--teacher-adapter PATH` keeps an earlier probability reference fixed during further training. `--narration-penalty` discourages stock first words (`We`, `The`, `Okay`, `Hmm`, `I`) only in supervised thinking; it adds no inference-time filter or final-reply restriction.
-- `--entry-only` teaches only the first substantive thinking token, without rewarding earlier stopping. Answer and code/math probability retention still apply.
+- `--entry-weight` emphasizes a direct first thinking token alongside full-note training. `--entry-only` instead supervises just that token; answer and code/math probability retention still apply.
 - `--retention-kl` controls probability retention separately from the prose answer objective. `build-preferences --policy-retention` builds these rows from checked correct captures, keeping the model's actual notes and replies together.
 - `--attention-adapter PATH` instead freezes attention and learns only the opening-token adjustment alongside it.
 - `--preference-weight` adds DPO against checked wrong responses. `--compact-preference-weight` prefers reviewed short notes over native notes with identical final replies.
@@ -39,7 +39,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 
 `--steps` counts optimizer updates, each accumulating four examples. Validation selects the saved checkpoint. `--no-promote` keeps evaluation under `flint-terse-eval`.
 
-The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/style-retention.jsonl` now has 190 prose/tool examples and 389 math/code retention examples. Its 200 code responses come from the accurate attention adapter and pass their tests; the 87 added prose wording variants keep final replies unchanged. The original few examples were insufficient.
+The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/style-retention.jsonl` has 190 prose/tool examples and 401 math/code retention examples. Its 212 code responses pass their tests; 61 also have checked incorrect alternatives for preference training. The 87 prose wording variants keep final replies unchanged. The original few examples were insufficient.
 
 To extend the corpus:
 
