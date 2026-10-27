@@ -49,11 +49,17 @@ def read_baseline(prefix, datasets, source, context):
 
 
 def accuracy_can_pass(base, candidate, max_drop):
-    checked = sum(r['correct'] is not None for r in base)
-    baseline = sum(r['correct'] is True for r in base)
-    pending = sum(r['correct'] is not None for r in base[len(candidate):])
-    possible = sum(r['correct'] is True for r in candidate) + pending
-    return (baseline - possible) * 100 <= max_drop * checked
+    for family in [None, *sorted({r['family'] for r in base if r.get('family')})]:
+        checked = baseline = possible = 0
+        for i, row in enumerate(base):
+            if row['correct'] is None or (family is not None and row.get('family') != family):
+                continue
+            checked += 1
+            baseline += row['correct'] is True
+            possible += i >= len(candidate) or candidate[i]['correct'] is True
+        if (baseline - possible) * 100 > max_drop * checked:
+            return False
+    return True
 
 
 def main(argv=None, loaded=None):
@@ -94,12 +100,12 @@ def main(argv=None, loaded=None):
     p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--max-accuracy-drop', type=float, default=2,
-                   help='Allowed checked-accuracy drop in percentage points (default: 2)')
+                   help='Allowed accuracy drop overall and per task family, in percentage points (default: 2)')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--resume-eval', action='store_true', help='Continue an interrupted evaluation without repeating saved tasks')
     p.add_argument('--no-promote', action='store_true', help='Leave the candidate as flint-terse-eval for further checks')
-    p.add_argument('--baseline', type=Path, help='Reuse saved baseline prefix, e.g. runs/flint-terse-base')
-    p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/direct-eval.jsonl',
+    p.add_argument('--baseline', type=Path, help='Reuse saved baseline prefix; matching runs/flint-terse-base is reused automatically')
+    p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/confirmation-eval.jsonl', 'data/direct-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
@@ -143,10 +149,6 @@ def main(argv=None, loaded=None):
         from corpus import read_rows
         if any(row.get('answer_only') for path in args.data for row in read_rows(path)):
             p.error('This corpus contains sampled notes; use --method attention --answer-only')
-    for label in (('terse',) if args.baseline else ('base', 'terse')):
-        for dataset in args.eval:
-            if not args.resume_eval and (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
-                p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
     packaged = (not args.evaluate_only and args.method == 'opening' and not args.from_scratch
@@ -159,7 +161,20 @@ def main(argv=None, loaded=None):
         args.max_change = .1 if packaged else 1
     if args.adapter_scale is None:
         args.adapter_scale = .9 if packaged else 1
-    results = {'base': read_baseline(args.baseline, args.eval, source, args.context)} if args.baseline else {}
+    results = {}
+    prefix = args.baseline or Path('runs/flint-terse-base')
+    try:
+        results['base'] = read_baseline(prefix, args.eval, source, args.context)
+    except (FileNotFoundError, ValueError):
+        if args.baseline:
+            raise
+        print('No matching saved baseline; evaluating the unchanged base.', flush=True)
+    else:
+        args.baseline = prefix
+    for label in (('terse',) if args.baseline else ('base', 'terse')):
+        for dataset in args.eval:
+            if not args.resume_eval and (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
+                p.error('Evaluation output already exists; choose a new --output name')
     if args.evaluate_only:
         config = json.loads((args.output / 'adapter_config.json').read_text())
         if config['base_model']['sha256'] != source['sha256']:
@@ -263,7 +278,7 @@ def main(argv=None, loaded=None):
             output.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
             results[label].extend(rows)
             if label == 'terse' and not accuracy_can_pass(results['base'], results[label], args.max_accuracy_drop):
-                raise SystemExit(f'{dataset}: remaining tasks cannot keep total accuracy within '
+                raise SystemExit(f'{dataset}: remaining tasks cannot keep overall and per-family accuracy within '
                                  f'{args.max_accuracy_drop:g} points; stopping evaluation.')
         if label == 'base':
             run('lms', 'unload', identifier)

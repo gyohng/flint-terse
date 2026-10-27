@@ -31,6 +31,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 - `--method attention --layers 49` trains rank-8 query/value LoRA. `--resume-adapter PATH` continues a compatible adapter at its saved scale; `--train-layers 8` can freeze its earlier layers.
 - `--same-prefix-teacher`, with attention resumption, preserves answer probabilities after the compact notes. Rows marked `preserve_only` match the starting policy throughout the response.
 - `--teacher-adapter PATH` keeps an earlier probability reference fixed during further training. `--narration-penalty` discourages stock first words (`We`, `The`, `Okay`, `Hmm`, `I`) only in supervised thinking; it adds no inference-time filter or final-reply restriction.
+- `--entry-only` teaches only the first substantive thinking token, without rewarding earlier stopping. Answer and code/math probability retention still apply.
 - `--retention-kl` controls probability retention separately from the prose answer objective. `build-preferences --policy-retention` builds these rows from checked correct captures, keeping the model's actual notes and replies together.
 - `--attention-adapter PATH` instead freezes attention and learns only the opening-token adjustment alongside it.
 - `--preference-weight` adds DPO against checked wrong responses. `--compact-preference-weight` prefers reviewed short notes over native notes with identical final replies.
@@ -73,7 +74,7 @@ Evaluations use temperature 1, top-p .95, top-k 20, min-p 0, repetition penalty 
   --no-promote
 ```
 
-`--resume-eval` continues saved candidate captures. The pipeline checks baseline tasks, checkpoint and sampling settings before reuse. Automatic release checks allow at most two percentage points of overall accuracy loss, require more than 70% less thinking on shared correct answers **and** completed ordinary replies, and reject completion regressions or leaked thinking tags. Inspect code scores and final replies separately; math gains must not hide code regressions.
+`--resume-eval` continues saved candidate captures. A matching `runs/flint-terse-base` baseline is reused automatically; the pipeline checks tasks, checkpoint and sampling settings. Automatic release checks allow at most two percentage points of accuracy loss overall **and within each task family**, require more than 70% less thinking on shared correct answers **and** completed ordinary replies, and reject completion regressions or leaked thinking tags. Inspect final replies too; the checks do not grade prose quality.
 
 OpenClaw replay checks tool calls without executing them:
 

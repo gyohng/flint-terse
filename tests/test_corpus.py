@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from code_checks import check_python
 from corpus import capture, check_answer, generate_api, prefix_template
-from finetune import accuracy_can_pass
+from finetune import accuracy_can_pass, read_baseline
 from make_corpus import arithmetic
 from preferences import add_preferences, repair_answers, retain_policy
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
@@ -48,6 +48,34 @@ class CorpusTests(unittest.TestCase):
             candidate = [{'correct': x} for x in [True] * correct + [False] * (done - correct)]
             with self.subTest(total=total, done=done, correct=correct, ungraded=ungraded):
                 self.assertEqual(accuracy_can_pass(base, candidate, 2), expected)
+
+    def test_math_gains_cannot_hide_code_regressions(self):
+        base = [{'family': family, 'correct': i < score}
+                for family, total, score in [('code', 80, 73), ('math', 120, 99)] for i in range(total)]
+        for code, math, done, expected in [(72, 105, 200, True), (70, 107, 200, False),
+                                            (66, 0, 78, False), (35, 0, 40, True)]:
+            candidate = [{'correct': i < score} for total, score in [(80, code), (120, math)]
+                         for i in range(total)][:done]
+            with self.subTest(code=code, math=math, done=done):
+                self.assertEqual(accuracy_can_pass(base, candidate, 2), expected)
+
+    def test_saved_baseline_requires_matching_checkpoint_tasks_and_sampling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            tasks, prefix = folder / 'tasks.jsonl', folder / 'base'
+            task = {'id': 'one', 'messages': [{'role': 'user', 'content': '1+1?'}]}
+            tasks.write_text(json.dumps(task) + '\n')
+            row = {**task, 'base_sha256': 'original', 'context': 65536, 'temperature': 1,
+                   'seed': 42, 'max_tokens': 4096, 'top_p': .95, 'top_k': 20, 'min_p': 0,
+                   'repeat_penalty': 1, 'api_mode': 'chat'}
+            for changed in ({}, {'seed': 43}, {'base_sha256': 'other'}, {'messages': []}):
+                Path(f'{prefix}-tasks.jsonl').write_text(json.dumps({**row, **changed}) + '\n')
+                with self.subTest(changed=changed):
+                    if changed:
+                        with self.assertRaises(ValueError):
+                            read_baseline(prefix, [tasks], {'sha256': 'original'}, 65536)
+                    else:
+                        self.assertEqual(read_baseline(prefix, [tasks], {'sha256': 'original'}, 65536), [row])
 
     def test_api_retry_keeps_the_same_request(self):
         args = SimpleNamespace(model='candidate', max_tokens=64, temperature=1, seed=42,
