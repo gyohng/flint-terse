@@ -83,12 +83,16 @@ case "${1:-help}" in
     shift
     node load_lmstudio.mjs "$@"
     ;;
-  finetune|deploy)
-    command="$1"
+  deploy)
+    shift
+    [[ -d .tools/lms-sdk/node_modules/@lmstudio/sdk ]] || ./run.sh setup-lmstudio
+    uv run --no-project --python 3.13 --with huggingface-hub==2.3.0 python deploy.py "$@"
+    ;;
+  finetune)
     shift
     [[ -x .venv/bin/python ]] || ./run.sh setup
     [[ -d .tools/lms-sdk/node_modules/@lmstudio/sdk ]] || ./run.sh setup-lmstudio
-    .venv/bin/python "$command.py" "$@"
+    .venv/bin/python finetune.py "$@"
     ;;
   test)
     .venv/bin/python -m unittest discover -s tests -v
