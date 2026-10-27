@@ -1,0 +1,14 @@
+{
+  "model": "RecursiveSI/flint-int4",
+  "think_tokens": true,
+  "think_opening": true,
+  "prompt_tokens": [],
+  "fine_tune_type": "lora",
+  "num_layers": 1,
+  "lora_parameters": {
+    "rank": 1,
+    "scale": 1.0,
+    "dropout": 0.0,
+    "keys": ["model.embed_tokens"]
+  }
+}

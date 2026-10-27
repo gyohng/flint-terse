@@ -43,6 +43,8 @@ Thinking reductions above use shared correct math/code answers. The pipeline als
 
 `--method attention` trains query/value LoRA directly from the unchanged base; `--layers N` sets its depth (Flint has 49 layers). `--initial-adapter PATH` can keep an existing thinking-token update frozen during attention training. `--adapter-scale` adjusts the exported update strength without changing the FP32 matrices or base weights. `--method tokens` adapts both `<think>` and `</think>` embeddings. Final replies containing thinking delimiters fail the release check, even if aggregate completion counts improve.
 
+For the pinned GGUF, the default recipe reproduces the repaired opening adapter at 90% strength: 100 updates, learning rate `.0001`, and an additional embedding-norm bound of `.1`. It starts from the supplied `data/opening-init` style adapter, learned in the original MLX experiment, then trains against the exact GGUF. No MLX checkpoint download is needed. `--from-scratch` skips that initializer; other checkpoints start from scratch unless you supply `--initial-adapter`.
+
 `data/casual-paired.jsonl` adds 29 reviewed examples (23 training, six validation) for greetings, vague requests and small code examples. Their final replies are unchanged from the official GGUF; only the working notes are shortened. Three collected replies were excluded during review.
 
 For attention training, `--preference-weight 1` adds the existing DPO objective against checked incorrect responses in the adaptive corpus. The reference is the frozen starting model, including any thinking-token adapter supplied with `--initial-adapter`.

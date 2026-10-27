@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from checkpoint import DEFAULT_MODEL, resolve_checkpoint, sha256
+from checkpoint import DEFAULT_MODEL, DEFAULT_SHA256, resolve_checkpoint, sha256
 
 
 def run(*args):
@@ -61,11 +61,13 @@ def main(argv=None, loaded=None):
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
     p.add_argument('--preference-weight', type=float, default=0,
                    help='Attention training: prefer checked correct responses over labeled mistakes')
-    p.add_argument('--adapter-scale', type=float, default=1,
+    p.add_argument('--adapter-scale', type=float,
                    help='Multiply the learned update at export without changing its FP32 matrices')
-    p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
-    p.add_argument('--learning-rate', type=float, help='Defaults to .001 for token adapters, .000005 for attention')
-    p.add_argument('--max-change', type=float, default=1,
+    start = p.add_mutually_exclusive_group()
+    start.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
+    start.add_argument('--from-scratch', action='store_true', help='Skip the packaged opening-token initializer')
+    p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
+    p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--max-accuracy-drop', type=float, default=2,
                    help='Allowed checked-accuracy drop in percentage points (default: 2)')
@@ -78,17 +80,15 @@ def main(argv=None, loaded=None):
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
-    if args.learning_rate is None:
-        args.learning_rate = .000005 if args.method == 'attention' else .001
     if args.preference_weight < 0 or (args.preference_weight and args.method != 'attention'):
         p.error('--preference-weight must be nonnegative and requires --method attention')
-    if not args.evaluate_only and args.method == 'attention' and args.max_change != 1:
+    if not args.evaluate_only and args.method == 'attention' and args.max_change not in (None, 1):
         p.error('--max-change applies only to opening training')
-    if args.max_change <= 0:
+    if args.max_change is not None and args.max_change <= 0:
         p.error('--max-change must be positive')
     if not 0 <= args.max_accuracy_drop <= 100:
         p.error('--max-accuracy-drop must be between 0 and 100')
-    if args.adapter_scale <= 0 or (args.evaluate_only and args.adapter_scale != 1):
+    if args.adapter_scale is not None and (args.adapter_scale <= 0 or (args.evaluate_only and args.adapter_scale != 1)):
         p.error('--adapter-scale must be positive and applies only when training; evaluation uses the saved scale')
     if args.resume_eval and not args.evaluate_only:
         p.error('--resume-eval requires --evaluate-only')
@@ -100,6 +100,16 @@ def main(argv=None, loaded=None):
                 p.error('Evaluation output already exists; choose a new --output name')
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
+    packaged = (not args.evaluate_only and args.method == 'opening' and not args.from_scratch
+                and args.initial_adapter is None and source['sha256'] == DEFAULT_SHA256)
+    if packaged:
+        args.initial_adapter = 'data/opening-init'
+    if args.learning_rate is None:
+        args.learning_rate = .0001 if packaged else .000005 if args.method == 'attention' else .001
+    if args.max_change is None:
+        args.max_change = .1 if packaged else 1
+    if args.adapter_scale is None:
+        args.adapter_scale = .9 if packaged else 1
     results = {'base': read_baseline(args.baseline, args.eval, source, args.context)} if args.baseline else {}
     if args.evaluate_only:
         config = json.loads((args.output / 'adapter_config.json').read_text())
