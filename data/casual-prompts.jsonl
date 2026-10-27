@@ -1,0 +1,32 @@
+{"id": "casual-01", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Hello there!"}]}
+{"id": "casual-02", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Good afternoon."}]}
+{"id": "casual-03", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Hello again."}]}
+{"id": "casual-04", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Thanks, I appreciate it."}]}
+{"id": "casual-05", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "That was useful, cheers."}]}
+{"id": "casual-06", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I got it working at last!"}]}
+{"id": "casual-07", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Can you give me a hand with something?"}]}
+{"id": "casual-08", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I could use some advice."}]}
+{"id": "casual-09", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I'm stuck on a small problem."}]}
+{"id": "casual-10", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Could we build something simple together?"}]}
+{"id": "casual-11", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I'd like a short example in Lua."}]}
+{"id": "casual-12", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Show me a tiny Go program."}]}
+{"id": "casual-13", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Can you demonstrate a loop in Python?"}]}
+{"id": "casual-14", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Give me a small C program to try."}]}
+{"id": "casual-15", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I want to make a simple webpage."}]}
+{"id": "casual-16", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Could you show a minimal R example?"}]}
+{"id": "casual-17", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Are you around?"}]}
+{"id": "casual-18", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Let's get started."}]}
+{"id": "casual-19", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Okay, thanks!"}]}
+{"id": "casual-20", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "That makes sense now."}]}
+{"id": "casual-21", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Can you suggest a tiny programming project?"}]}
+{"id": "casual-22", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "I want to practice Python for a few minutes."}]}
+{"id": "casual-23", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "Show me a short Swift example."}]}
+{"id": "casual-24", "family": "prose", "split": "train", "loss_weight": 3, "messages": [{"role": "user", "content": "How about a small PowerShell example?"}]}
+{"id": "casual-25", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Morning!"}]}
+{"id": "casual-26", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Hey, how's it going?"}]}
+{"id": "casual-27", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Much appreciated!"}]}
+{"id": "casual-28", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "I have a question."}]}
+{"id": "casual-29", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Not sure where to begin."}]}
+{"id": "casual-30", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Show me a little TypeScript example."}]}
+{"id": "casual-31", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "I'd like to try a short Perl script."}]}
+{"id": "casual-32", "family": "prose", "split": "valid", "loss_weight": 3, "messages": [{"role": "user", "content": "Can you give me a simple Kotlin example?"}]}
