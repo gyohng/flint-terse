@@ -106,6 +106,10 @@ def main(argv=None, loaded=None):
         p.error('--resume-eval requires --evaluate-only')
     if args.output.exists() and not args.evaluate_only:
         p.error(f'{args.output} exists; choose a new --output')
+    if not args.evaluate_only and not args.answer_only:
+        from corpus import read_rows
+        if any(row.get('answer_only') for path in args.data for row in read_rows(path)):
+            p.error('This corpus contains sampled notes; use --method attention --answer-only')
     for label in (('terse',) if args.baseline else ('base', 'terse')):
         for dataset in args.eval:
             if not args.resume_eval and (Path('runs') / f'{args.output.name}-{label}-{Path(dataset).stem}.jsonl').exists():
@@ -219,6 +223,10 @@ def main(argv=None, loaded=None):
     graded = sum(r['correct'] is not None for r in base)
     print(f'Checks: base {baseline}/{graded}, terse {adapted}/{graded}. '
           f'Thinking on shared successes: {before} -> {after} tokens.', flush=True)
+    for family in sorted({r['family'] for r in base if r.get('family') and r['correct'] is not None}):
+        tasks = [(b, t) for b, t in zip(base, terse) if b.get('family') == family and b['correct'] is not None]
+        print(f'{family}: base {sum(b["correct"] is True for b, _ in tasks)}/{len(tasks)}, '
+              f'terse {sum(t["correct"] is True for _, t in tasks)}/{len(tasks)}.', flush=True)
     if not accuracy_can_pass(base, terse, args.max_accuracy_drop):
         raise SystemExit('Accuracy drop exceeds the allowed margin. Inspect the saved answers.')
     if sum(r['complete'] for r in terse) < sum(r['complete'] for r in base):

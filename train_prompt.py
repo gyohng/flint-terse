@@ -124,6 +124,8 @@ def main(argv=None, loaded=None):
         ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids)
     records, cursor = {"train": [], "valid": []}, 0
     for row in (r for path in args.input for r in read_rows(path)):
+        if row.get("answer_only"):
+            raise ValueError(f"{row['id']}: sampled notes require attention training with --answer-only")
         ids, offset = training_tokens(row, tokenizer)
         original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         teacher_ids, teacher_offset = training_tokens(original, tokenizer)
