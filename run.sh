@@ -22,15 +22,9 @@ case "${1:-help}" in
     npm install --prefix .tools/lms-sdk --no-save @lmstudio/sdk@2.1.0
     ;;
   download)
-    .venv/bin/python - <<'PY'
-from huggingface_hub import snapshot_download
-snapshot_download(
-    "RecursiveSI/flint-int4",
-    revision="3b93f9053b530488405ae9fca51d4900d6ce21f0",
-    local_dir="models/flint-int4",
-    allow_patterns=["*.json", "*.jinja", "*.safetensors", "LICENSE"],
-)
-PY
+    shift
+    [[ -x .venv/bin/python ]] || ./run.sh setup
+    .venv/bin/python checkpoint.py "$@"
     ;;
   prepare|capture|rewrite|compare|score)
     .venv/bin/python corpus.py "$@"
@@ -104,7 +98,7 @@ PY
 ./run.sh finetune /path/to/flint.gguf --output release/my-flint-terse
 ./run.sh setup
 ./run.sh setup-gguf
-./run.sh download
+./run.sh download # Find/download the pinned official GGUF; accepts other checkpoints
 ./run.sh serve # Original MLX weights + separate adapter; API model: default_model
 ./run.sh export-adapter # FP32 GGUF adapter + Jinja override; no base conversion
 ./run.sh setup-lmstudio

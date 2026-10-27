@@ -42,3 +42,15 @@ def resolve_checkpoint(model=DEFAULT_MODEL, revision=None, model_dirs=()):
     if sha256(path) != expected:
         raise ValueError(f'GGUF checksum mismatch: {path}')
     return path.resolve(), metadata
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('model', nargs='?', default=DEFAULT_MODEL,
+                        help='Local GGUF or owner/repository:filename.gguf')
+    parser.add_argument('--revision', help='Hugging Face revision; the default checkpoint is pinned')
+    parser.add_argument('--model-dir', action='append', default=[], help='Additional local model search directory')
+    args = parser.parse_args()
+    print(resolve_checkpoint(args.model, args.revision, args.model_dir)[0])
