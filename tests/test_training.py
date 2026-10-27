@@ -49,6 +49,9 @@ class TrainingTests(unittest.TestCase):
         self.assertGreater(grad[0, 1, 7].item(), 0)
         self.assertEqual(mx.max(mx.abs(grad[:, :1])).item(), 0)
         self.assertEqual(mx.max(mx.abs(grad[:, 2:])).item(), 0)
+        baseline = mx.grad(lambda x: reasoning_loss(x, targets, 4, reference, 0))(logits)
+        weighted = mx.grad(lambda x: reasoning_loss(x, targets, 4, reference, 0, entry_weight=2))(logits)
+        self.assertLess(mx.max(mx.abs(weighted - baseline - 2 * grad)).item(), 1e-6)
 
     def test_narration_penalty_changes_only_the_first_thinking_word(self):
         logits = mx.zeros((1, 12, 32))

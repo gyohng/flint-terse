@@ -155,7 +155,7 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
     return answer_kl * preservation + answer_weight * answer_ce
 
 
-def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False, entry_only=False):
+def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False, entry_only=False, entry_weight=0):
     if answer_only:
         # Sampled notes may be wrong; don't imitate them or encourage earlier closing.
         thought = 0
@@ -171,6 +171,8 @@ def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=
         positions = mx.arange(closing + 1)
         weights = mx.where((positions > 0) & (positions <= min(8, closing - 1)), start_weight, 1)
         thought = (losses * weights).sum() / weights.sum()
+    if entry_weight and closing > 1:
+        thought += entry_weight * nn.losses.cross_entropy(logits[:, 1:2], targets[:, 1:2]).mean()
     return thought + answer_loss(logits, targets, closing, reference, answer_kl, answer_weight)
 
 
@@ -313,7 +315,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         else:
             result = reasoning_loss(logits, targets, closing, reference,
                                     args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only,
-                                    getattr(args, 'entry_only', False))
+                                    getattr(args, 'entry_only', False), getattr(args, 'entry_weight', 0))
             if narration_penalty and ids[offset + 1] not in discouraged:
                 result += narration_penalty * narration_loss(logits, discouraged)
         chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum") if preference else None
@@ -377,6 +379,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument('--entry-only', action='store_true', help='Paired mode: supervise only the first substantive thinking token')
+    p.add_argument('--entry-weight', type=float, default=0, help='Additional weight for the first substantive thinking token')
     p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies without supervising sampled notes or the closing boundary")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
@@ -420,6 +423,8 @@ def main(argv=None, loaded=None):
         p.error("--opening-only requires --paired")
     if args.entry_only and (not args.paired or args.opening_only or args.answer_only or args.narration_penalty):
         p.error('--entry-only requires paired training without other thinking-loss overrides')
+    if args.entry_weight < 0 or (args.entry_weight and (not args.paired or args.entry_only or args.answer_only)):
+        p.error('--entry-weight requires paired reasoning supervision and a nonnegative weight')
     if args.answer_only and (not args.paired or args.opening_only or args.preference_weight or args.compact_preference_weight):
         p.error("--answer-only requires paired training without reasoning supervision or preferences")
     if args.think_adapter and (not args.paired or args.resume):
