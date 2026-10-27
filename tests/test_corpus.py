@@ -160,6 +160,8 @@ class CorpusTests(unittest.TestCase):
         paired = add_preferences([row], candidates)[0]
         self.assertEqual(paired["rejected_assistant"]["content"], "41")
         self.assertEqual(paired["assistant"], row["assistant"])
+        api_candidate = {k: v for k, v in candidates[0].items() if k != 'ending'}
+        self.assertEqual(add_preferences([row], [api_candidate])[0]['rejected_ending'], '<|user|>')
         self.assertNotIn("rejected_assistant", row)
         formatted = {**candidates[0], "text": "<think>notes</think>$42"}
         empty = {**candidates[0], "text": "<think>notes</think>"}

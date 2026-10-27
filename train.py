@@ -305,16 +305,17 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     def loss(model, ids, offset, closing, reference, cached, preserve, preference):
         hidden = completion_hidden(model, ids, offset, cached, first_layer)
         logits = model.lm_head(hidden).astype(mx.float32)
+        targets = mx.array([ids[offset:]])
         if preserve:
             divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
             weight = getattr(args, 'retention_kl', None)
-            return (args.kl if weight is None else weight) * .5 * (divergence.mean() + divergence[:, :8].mean())
-        targets = mx.array([ids[offset:]])
-        result = reasoning_loss(logits, targets, closing, reference,
-                                args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only,
-                                getattr(args, 'entry_only', False))
-        if narration_penalty and ids[offset + 1] not in discouraged:
-            result += narration_penalty * narration_loss(logits, discouraged)
+            result = (args.kl if weight is None else weight) * .5 * (divergence.mean() + divergence[:, :8].mean())
+        else:
+            result = reasoning_loss(logits, targets, closing, reference,
+                                    args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only,
+                                    getattr(args, 'entry_only', False))
+            if narration_penalty and ids[offset + 1] not in discouraged:
+                result += narration_penalty * narration_loss(logits, discouraged)
         chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum") if preference else None
         for rejected_ids, rejected_cached, reference_ratio, weight in preference:
             rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer)

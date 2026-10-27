@@ -33,7 +33,8 @@ def add_preferences(rows, candidates):
                     continue
             if check_answer(row, answer, True) is False:
                 assistant = parse_assistant(reasoning, answer, row.get("tools", []))
-                wrong.append((candidate["output_tokens"], assistant, candidate["ending"]))
+                ending = candidate.get('ending', '<|observation|>' if assistant.get('tool_calls') else '<|user|>')
+                wrong.append((candidate["output_tokens"], assistant, ending))
         row = dict(row)
         row.pop("rejected_assistant", None)
         row.pop("rejected_ending", None)
