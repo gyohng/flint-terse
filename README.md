@@ -69,7 +69,7 @@ The two saved 100-task sets contain 120 math and 80 code tasks. Both have been u
 | Repaired opening token | 103/120 | 63/80 | 166/200 | 79.1% |
 | All-layer attention at 55% strength | 105/120 | 72/80 | 177/200 | 69.9% |
 
-The attention candidate restores code accuracy but still narrates ordinary requests. The current work targets that remaining verbosity. These finite comparisons do not establish unchanged quality on other tasks.
+The attention candidate remains the best balanced result, but still narrates ordinary requests. The latest style run (`gguf-code-varied`) passes the six conversational coding checks with 95.1% less thinking, yet scores 39/49 on the broader code evaluation versus the base's 45/49 on those same tasks. Evaluation stopped once it could no longer pass the accuracy gate; it is not a release candidate. The next step is checked short-note supervision across the 180 additional coding tasks, rather than more strength variations. These finite comparisons do not establish unchanged quality on other tasks.
 
 Evaluations use temperature 1, top-p .95, top-k 20, min-p 0, repetition penalty 1, seed 42 per request, a 4,096-token output budget and 64K context. Reuse the saved baseline rather than generating it again:
 
