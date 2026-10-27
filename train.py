@@ -225,9 +225,9 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
     same_prefix = getattr(args, 'same_prefix_teacher', False)
-    teacher_adapter = getattr(args, 'teacher_adapter', None) or getattr(args, 'resume', None)
-    if same_prefix and any(meta.get('adapter') != teacher_adapter for _, meta in parts):
-        raise ValueError('Same-prefix features must use the starting attention adapter')
+    teacher_adapter = getattr(args, 'teacher_adapter', None) or (getattr(args, 'resume', None) if same_prefix else None)
+    if teacher_adapter and any(meta.get('adapter') != teacher_adapter for _, meta in parts):
+        raise ValueError('Teacher features must use the selected attention adapter')
     teacher = {k: mx.concatenate([part[k] for part, _ in parts]) for k in ("hidden", "targets")}
     del parts
     records, cursor = {"train": [], "valid": []}, 0
@@ -406,8 +406,8 @@ def main(argv=None, loaded=None):
         p.error("--iters must be positive and divisible by --accumulate")
     if args.same_prefix_teacher and (not args.resume or not args.paired or args.compact_preference_weight):
         p.error('--same-prefix-teacher requires paired --resume without compact preferences')
-    if args.teacher_adapter and not args.same_prefix_teacher:
-        p.error('--teacher-adapter requires --same-prefix-teacher')
+    if args.teacher_adapter and not (args.resume and args.paired):
+        p.error('--teacher-adapter requires paired --resume')
     if args.narration_penalty < 0 or (args.narration_penalty and (not args.paired or args.answer_only)):
         p.error('--narration-penalty requires paired reasoning supervision and a nonnegative weight')
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:

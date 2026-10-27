@@ -199,14 +199,14 @@ class TrainingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             features, corpus = folder / "features.safetensors", folder / "corpus.jsonl"
-            mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(original_ids[offset:])}, metadata={"model": "tiny"})
+            mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(original_ids[offset:])}, metadata={"model": "tiny", "adapter": "teacher"})
             rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
             rows[0].update(rejected_assistant={"content": "wrong"}, rejected_ending="<|user|>")
             rows.append({"id": "retention", "split": "train", "preserve_only": True, "assistant": {}})
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=[corpus],
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
-                opening_only=True, answer_only=False, resume=None, preference_weight=1, compact_preference_weight=1, preference_beta=.1, output=folder)
+                opening_only=True, answer_only=False, resume=None, teacher_adapter='teacher', preference_weight=1, compact_preference_weight=1, preference_beta=.1, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
             def tokens(row, *a, **kw):
                 if row["assistant"].get("reasoning_content") == "native":
@@ -215,6 +215,9 @@ class TrainingTests(unittest.TestCase):
             with patch("train.training_tokens", side_effect=tokens), patch("train.grad_checkpoint"), \
                  patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
                 train_paired(model, tokenizer, args)
+                args.teacher_adapter = 'wrong-teacher'
+                with self.assertRaisesRegex(ValueError, 'selected attention adapter'):
+                    train_paired(model, tokenizer, args)
             saved = mx.load(str(folder / "adapters.safetensors"))
             current = dict(tree_flatten(model.trainable_parameters()))
             self.assertEqual(saved.keys(), current.keys())
@@ -263,7 +266,7 @@ class TrainingTests(unittest.TestCase):
                 train_paired(model, tokenizer, args)
                 self.assertGreater(completion_logp(model, ids, offset).item(), initial)
                 args.teacher_adapter = 'wrong-teacher'
-                with self.assertRaisesRegex(ValueError, 'starting attention adapter'):
+                with self.assertRaisesRegex(ValueError, 'selected attention adapter'):
                     train_paired(model, tokenizer, args)
 
     def test_retention_rows_still_learn_correctness_preferences(self):

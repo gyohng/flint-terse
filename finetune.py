@@ -90,7 +90,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--attention-adapter', help='Train the opening token alongside this frozen attention adapter')
     p.add_argument('--same-prefix-teacher', action='store_true',
                    help='When resuming attention, retain probabilities at the compact prefixes')
-    p.add_argument('--teacher-adapter', help='Fixed reference for same-prefix probability retention')
+    p.add_argument('--teacher-adapter', help='Fixed attention adapter for answer-probability references')
     p.add_argument('--narration-penalty', type=float, default=0,
                    help='Attention training: discourage stock narration at the start of supervised thinking')
     p.add_argument('--entry-only', action='store_true',
@@ -114,8 +114,8 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.same_prefix_teacher and (not args.resume_adapter or args.compact_preference_weight):
         p.error('--same-prefix-teacher requires --resume-adapter without compact preferences')
-    if args.teacher_adapter and not args.same_prefix_teacher:
-        p.error('--teacher-adapter requires --same-prefix-teacher')
+    if args.teacher_adapter and not args.resume_adapter:
+        p.error('--teacher-adapter requires --resume-adapter')
     if args.retention_kl < 0:
         p.error('--retention-kl must be nonnegative')
     if args.narration_penalty < 0 or (args.narration_penalty and (args.method != 'attention' or args.answer_only)):
@@ -207,14 +207,15 @@ def main(argv=None, loaded=None):
         with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
             features = args.teacher_features or Path(tmp) / 'features.safetensors'
             if not args.teacher_features:
-                if args.same_prefix_teacher:
+                if args.same_prefix_teacher or args.teacher_adapter:
                     from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
                     load_adapters(loaded[0], args.teacher_adapter or args.resume_adapter)
-                teacher_adapter = (args.teacher_adapter or args.resume_adapter) if args.same_prefix_teacher else args.attention_adapter
+                teacher_adapter = args.teacher_adapter or (args.resume_adapter if args.same_prefix_teacher else args.attention_adapter)
                 cache_features.main([*args.data, '--model', str(model),
-                    *(['--adapter', teacher_adapter] if teacher_adapter else ['--original-reasoning']),
+                    *(['--adapter', teacher_adapter] if teacher_adapter else []),
+                    *([] if args.same_prefix_teacher or args.attention_adapter else ['--original-reasoning']),
                     '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
-                if args.same_prefix_teacher:
+                if args.same_prefix_teacher or args.teacher_adapter:
                     remove_lora_layers(loaded[0])
             if args.method == 'attention':
                 import train
