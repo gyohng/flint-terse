@@ -155,8 +155,11 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
     return answer_kl * preservation + answer_weight * answer_ce
 
 
-def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False):
-    if opening_only:
+def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False):
+    if answer_only:
+        # Sampled notes may be wrong. Teach the transition and verified reply, not the notes.
+        thought = nn.losses.cross_entropy(logits[:, closing], targets[:, closing]).mean()
+    elif opening_only:
         count = max(1, min(16, closing - 1))
         # Include <think>; fixed normalization avoids over-weighting empty thoughts.
         thought = nn.losses.cross_entropy(logits[:, :count + 1], targets[:, :count + 1]).sum() / 17
@@ -216,6 +219,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     model.train()
     close = tokenizer.convert_tokens_to_ids("</think>")
     for row in (r for path in args.paired for r in read_rows(path)):
+        if row.get("answer_only") and not args.answer_only:
+            raise ValueError(f"{row['id']}: sampled notes require --answer-only")
         ids, offset = training_tokens(row, tokenizer)
         original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         original_ids, original_offset = training_tokens(original, tokenizer)
@@ -267,7 +272,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         logits = model.lm_head(hidden).astype(mx.float32)
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
-                                args.kl, args.start_weight, args.answer_weight, args.opening_only)
+                                args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only)
         chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum") if preference else None
         for rejected_ids, rejected_cached, reference_ratio, weight in preference:
             rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer)
@@ -323,6 +328,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
+    p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies and the closing boundary without imitating sampled notes")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
     p.add_argument("--preference-weight", type=float, default=0, help="Paired mode: add DPO loss against labeled incorrect responses")
@@ -353,6 +359,8 @@ def main(argv=None, loaded=None):
         p.error("Preference weight must be nonnegative, beta positive, and preferences require paired training")
     if args.opening_only and not args.paired:
         p.error("--opening-only requires --paired")
+    if args.answer_only and (not args.paired or args.opening_only or args.preference_weight or args.compact_preference_weight):
+        p.error("--answer-only requires paired training without reasoning supervision or preferences")
     if args.think_adapter and (not args.paired or args.resume):
         p.error("--think-adapter requires paired training and cannot be combined with --resume")
     if args.paired and (args.batch_size != 1 or any(not t.startswith(("self_attn.", "mlp.")) for t in args.targets)):

@@ -69,6 +69,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
     p.add_argument('--preference-weight', type=float, default=0,
                    help='Attention training: prefer checked correct responses over labeled mistakes')
+    p.add_argument('--answer-only', action='store_true',
+                   help='Attention training: repair final answers without imitating the sampled reasoning')
     p.add_argument('--adapter-scale', type=float,
                    help='Multiply the learned update at export without changing its FP32 matrices')
     start = p.add_mutually_exclusive_group()
@@ -90,6 +92,8 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.preference_weight < 0 or (args.preference_weight and args.method != 'attention'):
         p.error('--preference-weight must be nonnegative and requires --method attention')
+    if args.answer_only and (args.method != 'attention' or args.preference_weight):
+        p.error('--answer-only requires --method attention without preferences')
     if not args.evaluate_only and args.method == 'attention' and args.max_change not in (None, 1):
         p.error('--max-change applies only to opening training')
     if args.max_change is not None and args.max_change <= 0:
@@ -149,6 +153,7 @@ def main(argv=None, loaded=None):
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--preference-weight', str(args.preference_weight),
+                    *(['--answer-only'] if args.answer_only else []),
                     '--layers', str(args.layers), '--rank', '8', '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)

@@ -142,7 +142,7 @@ class TrainingTests(unittest.TestCase):
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=[corpus],
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
-                opening_only=True, resume=None, preference_weight=1, compact_preference_weight=1, preference_beta=.1, output=folder)
+                opening_only=True, answer_only=False, resume=None, preference_weight=1, compact_preference_weight=1, preference_beta=.1, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
             def tokens(row, *a, **kw):
                 if row["assistant"].get("reasoning_content") == "native":
@@ -173,6 +173,19 @@ class TrainingTests(unittest.TestCase):
             if closing > 16:
                 self.assertLess(mx.max(mx.abs(grad[:, 17:])).item(), 1e-6)
         self.assertAlmostEqual(*gradients, places=6)
+
+    def test_answer_repair_does_not_supervise_sampled_thought_tokens(self):
+        for closing in (1, 20):
+            with self.subTest(closing=closing):
+                logits = mx.zeros((1, closing + 4, 32))
+                targets = mx.zeros((1, closing + 4), dtype=mx.int32)
+                reference = nn.log_softmax(logits[:, closing + 1:], axis=-1)
+                grad = mx.grad(lambda x: reasoning_loss(x, targets, closing, reference, 2,
+                    answer_weight=1, answer_only=True))(logits)
+                self.assertEqual(mx.max(mx.abs(grad[:, :closing])).item(), 0)
+                self.assertLess(grad[0, closing, 0].item(), 0)
+                self.assertLess(grad[0, closing + 1, 0].item(), 0)
+                self.assertLess(mx.max(mx.abs(grad[:, -1])).item(), 1e-6)
 
     def test_compact_thinking_loss_preserves_answers_by_probability(self):
         for closing in (1, 4):

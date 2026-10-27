@@ -11,7 +11,7 @@ from code_checks import check_python
 from corpus import capture, check_answer, generate_api, prefix_template
 from finetune import accuracy_can_pass
 from make_corpus import arithmetic
-from preferences import add_preferences
+from preferences import add_preferences, repair_answers
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
@@ -120,6 +120,27 @@ class CorpusTests(unittest.TestCase):
         self.assertNotIn("rejected_assistant", add_preferences([row], [formatted, empty])[0])
         with self.assertRaises(ValueError):
             add_preferences([{**row, "messages": []}], candidates)
+
+    def test_answer_repairs_keep_verified_code_and_exclude_truncated_notes(self):
+        row = {"id": "sum", "messages": [{"role": "user", "content": "Add one."}],
+               "tests": ["assert f(2) == 3"], "approved": True, "teacher_reasoning": "native",
+               "assistant": {"reasoning_content": "correct notes", "content": "def f(x): return x+1"}}
+        for notes, finish, accepted in [("wrong notes", "stop", True), ("", "stop", True),
+                                         ("unfinished", "length", False), ("<think>nested", "stop", False)]:
+            with self.subTest(notes=notes, finish=finish):
+                candidate = {"id": "sum", "messages": row["messages"], "finish_reason": finish,
+                             "assistant": {"reasoning_content": notes, "content": ""}}
+                result = repair_answers([row], [candidate])
+                self.assertEqual(bool(result), accepted)
+                if accepted:
+                    self.assertEqual(result[0]["assistant"], {**row["assistant"], "reasoning_content": notes})
+                    self.assertEqual(result[0]["teacher_reasoning"], "native")
+                    self.assertTrue(result[0]["answer_only"])
+        self.assertEqual(row["assistant"]["reasoning_content"], "correct notes")
+        with self.assertRaises(ValueError):
+            repair_answers([{**row, "assistant": {"content": "def f(x): return x-1"}}], [])
+        with self.assertRaises(ValueError):
+            repair_answers([row], [{**candidate, "messages": []}])
 
     def test_learned_prefix_keeps_history_and_completion_boundary(self):
         from jinja2 import Environment
