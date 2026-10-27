@@ -29,6 +29,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 
 - `--method opening` learns 2,048 values in the existing `<think>` embedding. The pinned base defaults to the packaged initializer in `data/opening-init`; `--from-scratch` skips it.
 - `--method attention --layers 49` trains rank-8 query/value LoRA. `--resume-adapter PATH` continues a compatible adapter at its saved scale; `--train-layers 8` can freeze its earlier layers.
+- Increasing `--rank` when resuming keeps the existing factors frozen and trains only the added columns. For example, rank 8 → 16 adds a separate rank-8 update while exporting one portable adapter.
 - `--same-prefix-teacher`, with attention resumption, preserves answer probabilities after the compact notes. Rows marked `preserve_only` match the starting policy throughout the response.
 - `--teacher-adapter PATH` keeps an answer-probability reference fixed, normally after the original `teacher_reasoning`. With `--same-prefix-teacher`, it follows compact notes and also supplies policy-retention targets. `--narration-penalty` discourages stock first words (`We`, `The`, `Okay`, `Hmm`, `I`) only in supervised thinking; it adds no inference-time filter or final-reply restriction.
 - `--entry-weight` emphasizes the first thinking token, `</think>`, and the first answer token. Each position is weighted once, including when thinking is empty. `--entry-only` instead supervises just the thinking entry; answer and code/math probability retention still apply.

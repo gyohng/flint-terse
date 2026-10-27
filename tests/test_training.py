@@ -337,7 +337,7 @@ class TrainingTests(unittest.TestCase):
         hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
-            source, output = directory / 'source', directory / 'output'
+            source = directory / 'source'
             source.mkdir()
             mx.save_safetensors(str(source / 'adapters.safetensors'), weights)
             (source / 'adapter_config.json').write_text(json.dumps({'model': 'tiny', 'num_layers': 2,
@@ -349,16 +349,24 @@ class TrainingTests(unittest.TestCase):
             corpus.write_text('\n'.join(json.dumps({'id': split, 'split': split, 'assistant': {}, 'teacher_reasoning': 'native'})
                                         for split in ('train', 'valid')))
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
-            with patch('train.training_tokens', return_value=(ids, offset)), patch('train.grad_checkpoint'):
-                train_main(['--model', 'tiny', '--paired', str(corpus), '--teacher-features', str(features),
-                    '--resume', str(source), '--layers', '2', '--train-layers', '1', '--rank', '2',
-                    '--iters', '1', '--accumulate', '1', '--output', str(output)], loaded=(model, tokenizer))
-            saved = mx.load(str(output / 'adapters.safetensors'))
-            self.assertEqual(saved.keys(), weights.keys())
-            for name in weights:
-                if name.startswith('model.layers.0.'):
-                    self.assertTrue(bool((saved[name] == weights[name]).all()))
-            self.assertEqual(json.loads((output / 'adapter_config.json').read_text())['lora_parameters']['scale'], .7)
+            for rank in (2, 4):
+                with self.subTest(rank=rank):
+                    output = directory / f'output-{rank}'
+                    with patch('train.training_tokens', return_value=(ids, offset)), patch('train.grad_checkpoint'):
+                        train_main(['--model', 'tiny', '--paired', str(corpus), '--teacher-features', str(features),
+                            '--resume', str(source), '--layers', '2', '--train-layers', '1', '--rank', str(rank),
+                            '--iters', '2', '--accumulate', '1', '--output', str(output)], loaded=(model, tokenizer))
+                    saved = mx.load(str(output / 'adapters.safetensors'))
+                    self.assertEqual(saved.keys(), weights.keys())
+                    for name, original in weights.items():
+                        old = saved[name][:, :2] if name.endswith('.lora_a') else saved[name][:2]
+                        if rank > 2 or name.startswith('model.layers.0.'):
+                            self.assertTrue(bool((old == original).all()), name)
+                        if rank > 2 and name.endswith('.lora_b'):
+                            changed = bool((saved[name][2:] != 0).any())
+                            self.assertEqual(changed, name.startswith('model.layers.1.'), name)
+                    self.assertEqual(json.loads((output / 'adapter_config.json').read_text())['lora_parameters']['scale'], .7)
+                    remove_lora_layers(model)
 
     def test_answer_repair_does_not_supervise_sampled_thought_tokens(self):
         for closing in (1, 20):

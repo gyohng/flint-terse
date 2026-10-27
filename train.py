@@ -10,7 +10,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import mlx.optimizers as optim
 import numpy as np
-from mlx.utils import tree_flatten, tree_map
+from mlx.utils import tree_flatten, tree_map, tree_unflatten
 from gguf_model import GGUFLinear, load_model as load
 from mlx_lm.models.base import create_attention_mask
 from mlx_lm.tuner.trainer import TrainingArgs, grad_checkpoint, iterate_batches, train
@@ -220,7 +220,7 @@ def narration_loss(logits, discouraged):
     return (mx.logsumexp(entry, axis=-1) - mx.logsumexp(mx.where(allowed, entry, -mx.inf), axis=-1)).mean()
 
 
-def train_paired(model, tokenizer, args, frozen_weights=None):
+def train_paired(model, tokenizer, args, frozen_weights=None, frozen_columns=None):
     trainable = [name for name, _ in tree_flatten(model.trainable_parameters())]
     if not trainable or any(not name.startswith("model.layers.") for name in trainable):
         raise ValueError("Paired training requires frozen embeddings, final norm and output head")
@@ -331,6 +331,18 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
 
     gradient = nn.value_and_grad(model, loss)
     optimizer = optim.Adam(learning_rate=args.learning_rate)
+    masks = None
+    if frozen_columns:
+        masks = []
+        for name, value in tree_flatten(model.trainable_parameters()):
+            mask = mx.ones_like(value)
+            if rank := frozen_columns.get(name):
+                if name.endswith('.lora_a'):
+                    mask[:, :rank] = 0
+                else:
+                    mask[:rank] = 0
+            masks.append((name, mask))
+        masks = tree_unflatten(masks)
     schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]], k=args.iters)
 
     def example(row, training):
@@ -361,7 +373,10 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             value, grad = example(row, True)
             total += value.item()
             accumulated = grad if accumulated is None else tree_map(lambda a, b: a + b, accumulated, grad)
-        optimizer.update(model, tree_map(lambda g: g / args.accumulate, accumulated))
+        grad = tree_map(lambda g: g / args.accumulate, accumulated)
+        if masks is not None:
+            grad = tree_map(lambda mask, g: mask * g, masks, grad)
+        optimizer.update(model, grad)
         mx.eval(model.trainable_parameters(), optimizer.state)
         if (step + 1) % 5 == 0:
             print(f"Update {step + 1}: loss={total / args.accumulate:.5f}, elapsed={time.monotonic() - started:.0f}s", flush=True)
@@ -394,7 +409,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--preference-beta", type=float, default=.1)
     p.add_argument("--output", default="adapters/terse")
     p.add_argument("--iters", type=int, default=100)
-    p.add_argument("--rank", type=int, default=8)
+    p.add_argument("--rank", type=int, default=8, help="Increasing a resumed rank freezes its existing factors and trains added columns")
     p.add_argument("--layers", type=int, default=16)
     p.add_argument("--train-layers", type=int, help="When resuming paired training, update only the last N layers and retain the rest")
     p.add_argument("--targets", nargs="+", default=["self_attn.q_proj", "self_attn.v_proj"])
@@ -471,6 +486,7 @@ def main(argv=None, loaded=None):
     }
     linear_to_lora_layers(model, args.layers, lora)
     frozen_weights = None
+    frozen_columns = None
     if args.think_adapter:
         previous = json.loads((Path(args.think_adapter) / "adapter_config.json").read_text())
         same_base = previous.get('model') == args.model
@@ -490,9 +506,21 @@ def main(argv=None, loaded=None):
             same_base = sha256(args.model) == previous['base_model']['sha256']
         if (not same_base or previous["num_layers"] > args.layers
             or not set(previous_lora["keys"]) <= set(args.targets)
-            or any(previous_lora[k] != lora[k] for k in ("rank", "scale", "dropout"))):
-            p.error("--resume must match model/rank/scale and retain every existing adapter layer and target")
-        model.load_weights(str(Path(args.resume) / "adapters.safetensors"), strict=False)
+            or previous_lora['rank'] > args.rank
+            or any(previous_lora[k] != lora[k] for k in ("scale", "dropout"))):
+            p.error("--resume must match model/scale and retain every existing adapter rank, layer and target")
+        weights = mx.load(str(Path(args.resume) / 'adapters.safetensors'))
+        if previous_lora['rank'] < args.rank:
+            if not args.paired:
+                p.error('Increasing a resumed rank requires paired training')
+            frozen_columns = {name: previous_lora['rank'] for name in weights}
+            initialized = dict(tree_flatten(model.parameters()))
+            weights = {name: mx.concatenate((value, initialized[name][:, value.shape[1]:]), axis=1)
+                       if name.endswith('.lora_a') else
+                       mx.concatenate((value, initialized[name][value.shape[0]:]), axis=0)
+                       for name, value in weights.items()}
+            print(f"Keeping rank {previous_lora['rank']} frozen; training {args.rank - previous_lora['rank']} new columns", flush=True)
+        model.load_weights(list(weights.items()), strict=False)
     if args.train_layers is not None:
         for layer in model.layers[:-args.train_layers]:
             layer.freeze()
@@ -503,7 +531,7 @@ def main(argv=None, loaded=None):
     output.mkdir(parents=True)
     config = {
         **vars(args), "fine_tune_type": "lora", "num_layers": args.layers,
-        "lora_parameters": lora,
+        "lora_parameters": lora, "frozen_rank": previous['lora_parameters']['rank'] if frozen_columns else 0,
     }
     (output / "adapter_config.json").write_text(json.dumps(config, indent=2) + "\n")
     training_args = TrainingArgs(
@@ -514,7 +542,7 @@ def main(argv=None, loaded=None):
         steps_per_save=args.iters + 1, adapter_file=output / "adapters.safetensors",
     )
     if args.paired:
-        train_paired(model, tokenizer, args, frozen_weights)
+        train_paired(model, tokenizer, args, frozen_weights, frozen_columns)
     else:
         train(
             model, optim.Adam(learning_rate=args.learning_rate),

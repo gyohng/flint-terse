@@ -74,6 +74,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
                    help='Adapt the opening token, both thinking boundaries, or attention projections')
     p.add_argument('--layers', type=int, help='Attention adapter depth; defaults to 8, or the resumed adapter depth')
+    p.add_argument('--rank', type=int, help='LoRA rank; increasing a resumed rank freezes its existing factors and trains added columns')
     p.add_argument('--train-layers', type=int, help='When resuming an attention adapter, update only the last N layers')
     p.add_argument('--preference-weight', type=float, default=0,
                    help='Attention training: prefer checked correct responses over labeled mistakes')
@@ -130,8 +131,13 @@ def main(argv=None, loaded=None):
         p.error('--resume-adapter requires --method attention')
     if args.train_layers is not None and not args.resume_adapter:
         p.error('--train-layers requires --resume-adapter')
+    if args.rank is not None and (args.rank < 1 or args.method != 'attention'):
+        p.error('--rank requires attention training and a positive value')
+    resumed = json.loads((Path(args.resume_adapter) / 'adapter_config.json').read_text()) if args.resume_adapter else None
     if args.layers is None:
-        args.layers = json.loads((Path(args.resume_adapter) / 'adapter_config.json').read_text())['num_layers'] if args.resume_adapter else 8
+        args.layers = resumed['num_layers'] if resumed else 8
+    if args.rank is None:
+        args.rank = resumed['lora_parameters']['rank'] if resumed else 8
     if min(args.preference_weight, args.compact_preference_weight) < 0 or (
         (args.preference_weight or args.compact_preference_weight) and args.method != 'attention'):
         p.error('Preference weights must be nonnegative and require --method attention')
@@ -233,7 +239,7 @@ def main(argv=None, loaded=None):
                     '--preference-weight', str(args.preference_weight),
                     '--compact-preference-weight', str(args.compact_preference_weight),
                     *(['--answer-only'] if args.answer_only else []),
-                    '--layers', str(args.layers), '--rank', '8', '--iters', str(args.steps * 4),
+                    '--layers', str(args.layers), '--rank', str(args.rank), '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)
             else:
