@@ -156,9 +156,10 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
 
 
 def retention_loss(logits, reference, closing):
+    # Preserve answers without teaching the old thinking wording back to the student.
+    logits, reference = logits[:, closing + 1:], reference[:, closing + 1:]
     divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
-    # Protect answer format without giving stock thinking openings extra weight.
-    return .5 * (divergence.mean() + divergence[:, closing + 1:closing + 9].mean())
+    return .5 * (divergence.mean() + divergence[:, :8].mean())
 
 
 def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False, entry_only=False, entry_weight=0):

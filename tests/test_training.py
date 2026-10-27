@@ -40,7 +40,7 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
-    def test_retention_emphasizes_answer_entry_without_locking_thinking_openings(self):
+    def test_retention_protects_answers_without_supervising_thinking(self):
         logits = mx.zeros((1, 32, 4))
         reference = nn.log_softmax(logits, axis=-1)
         for closing in (4, 12):
@@ -48,9 +48,9 @@ class TrainingTests(unittest.TestCase):
                 self.assertEqual(retention_loss(logits, reference, closing).item(), 0)
                 losses = [retention_loss(logits.at[:, position, 0].add(2), reference, closing).item()
                           for position in (1, closing + 1, 31)]
-                self.assertGreater(losses[0], 0)
-                self.assertAlmostEqual(losses[0], losses[2])
-                self.assertGreater(losses[1], losses[0])
+                self.assertEqual(losses[0], 0)
+                self.assertGreater(losses[2], 0)
+                self.assertGreater(losses[1], losses[2])
 
     def test_entry_supervision_and_answer_transition(self):
         logits = mx.zeros((1, 8, 32))
