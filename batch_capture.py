@@ -144,6 +144,9 @@ def main():
                         finished[index] = selected
                         candidates[index] = []
                         completed += 1
+                        if completed % 32 == 0:
+                            # Long collections can exhaust Metal's cached-buffer count.
+                            mx.clear_cache()
                         print(f"{completed}/{len(rows)} {selected['id']}: think={selected['reasoning_tokens']}, "
                               f"correct={selected['correct']}", flush=True)
                     while cursor in finished:
