@@ -57,6 +57,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--output', type=Path, default=Path('release/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--method', choices=('opening', 'attention'), default='opening')
+    p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
     p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
     p.add_argument('--learning-rate', type=float, help='Defaults to .001 for opening, .000005 for attention')
     p.add_argument('--max-change', type=float, default=1,
@@ -116,7 +117,7 @@ def main(argv=None, loaded=None):
                 train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
-                    '--layers', '8', '--rank', '8', '--iters', str(args.steps * 4),
+                    '--layers', str(args.layers), '--rank', '8', '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)
             else:
