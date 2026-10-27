@@ -125,6 +125,8 @@ def main(argv=None, loaded=None):
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--max-accuracy-drop', type=float, default=2,
                    help='Allowed accuracy drop overall and per task family, in percentage points (default: 2)')
+    p.add_argument('--min-thinking-reduction', type=float, default=70,
+                   help='Required thinking reduction on shared correct and ordinary completed replies, percent (default: 70)')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--resume-eval', action='store_true', help='Continue an interrupted evaluation without repeating saved tasks')
     p.add_argument('--no-promote', action='store_true', help='Leave the candidate as flint-terse-eval for further checks')
@@ -170,6 +172,8 @@ def main(argv=None, loaded=None):
         p.error('--max-change must be positive')
     if not 0 <= args.max_accuracy_drop <= 100:
         p.error('--max-accuracy-drop must be between 0 and 100')
+    if not 0 <= args.min_thinking_reduction < 100:
+        p.error('--min-thinking-reduction must be at least 0 and below 100')
     if args.adapter_scale is not None and (args.adapter_scale <= 0 or (args.evaluate_only and args.adapter_scale != 1)):
         p.error('--adapter-scale must be positive and applies only when training; evaluation uses the saved scale')
     if args.resume_eval and not args.evaluate_only:
@@ -336,15 +340,17 @@ def main(argv=None, loaded=None):
     prose = [(b, t) for b, t in zip(base, terse) if b['correct'] is None]
     if sum(t['complete'] for _, t in prose) < sum(b['complete'] for b, _ in prose):
         raise SystemExit('Ordinary-reply completion regression detected. Inspect the saved answers.')
-    if not paired or after * 100 >= before * 30:
-        raise SystemExit('Thinking reduction must exceed 70%. This is not a terse release; inspect the traces.')
+    remaining = 100 - args.min_thinking_reduction
+    if not paired or after * 100 >= before * remaining:
+        raise SystemExit(f'Thinking reduction must exceed {args.min_thinking_reduction:g}%; inspect the traces.')
     ordinary = [(b, t) for b, t in prose if b['complete'] and t['complete']]
     before = sum(b['reasoning_tokens'] for b, _ in ordinary)
     after = sum(t['reasoning_tokens'] for _, t in ordinary)
     if ordinary:
         print(f'Ordinary completed replies: thinking {before} -> {after} tokens.', flush=True)
-        if before and after * 100 >= before * 30:
-            raise SystemExit('Thinking reduction on ordinary replies must also exceed 70%; inspect the traces.')
+        if before and after * 100 >= before * remaining:
+            raise SystemExit(f'Thinking reduction on ordinary replies must also exceed '
+                             f'{args.min_thinking_reduction:g}%; inspect the traces.')
     if args.no_promote:
         print(f'Automatic checks passed for {args.output}; candidate remains flint-terse-eval for further checks.')
         return
