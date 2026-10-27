@@ -59,6 +59,8 @@ Rows contain `id`, `messages`, `split`, `assistant`, and a numeric, text, JSON, 
 
 The two saved 100-task sets contain 120 math and 80 code tasks. Both have been used to compare candidates, so they are development evaluations, not untouched confirmation sets.
 
+`data/code-prose-eval.jsonl` adds six separate conversational coding tasks with executable checks. They are excluded from training; the unchanged base passes 6/6 using 6,271 thinking tokens. Their saved baseline can be reused alongside the existing evaluations.
+
 | Candidate | Math | Code | Total | Less thinking on shared correct answers |
 | --- | ---: | ---: | ---: | ---: |
 | Unchanged official GGUF | 99/120 | 73/80 | 172/200 | — |
