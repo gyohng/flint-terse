@@ -157,8 +157,8 @@ def answer_loss(logits, targets, closing, reference, answer_kl, answer_weight):
 
 def reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight=1, answer_weight=0, opening_only=False, answer_only=False):
     if answer_only:
-        # Sampled notes may be wrong. Teach the transition and verified reply, not the notes.
-        thought = nn.losses.cross_entropy(logits[:, closing], targets[:, closing]).mean()
+        # Sampled notes may be wrong; don't imitate them or encourage earlier closing.
+        thought = 0
     elif opening_only:
         count = max(1, min(16, closing - 1))
         # Include <think>; fixed normalization avoids over-weighting empty thoughts.
@@ -219,21 +219,30 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     model.train()
     close = tokenizer.convert_tokens_to_ids("</think>")
     for row in (r for path in args.paired for r in read_rows(path)):
-        if row.get("answer_only") and not args.answer_only:
+        if (row.get("answer_only") or row.get("preserve_only")) and not args.answer_only:
             raise ValueError(f"{row['id']}: sampled notes require --answer-only")
         ids, offset = training_tokens(row, tokenizer)
-        original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
-        original_ids, original_offset = training_tokens(original, tokenizer)
-        completion, native = ids[offset:], original_ids[original_offset:]
-        closing, native_close = completion.index(close), native.index(close)
-        if len(ids) > args.max_tokens or ids[:offset] != original_ids[:original_offset]:
-            raise ValueError(f"{row['id']}: invalid context or mismatched teacher prompt")
-        if completion[closing + 1:] != native[native_close + 1:]:
-            raise ValueError(f"{row['id']}: final reply changed")
-        if teacher["targets"][cursor:cursor + len(native)].tolist() != native:
-            raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
-        hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
+        completion = ids[offset:]
+        closing = completion.index(close)
+        if len(ids) > args.max_tokens:
+            raise ValueError(f"{row['id']}: context exceeds --max-tokens")
         cached = frozen_hidden(model, ids, first_layer)
+        preserve = row.get("preserve_only", False)
+        if preserve:
+            # Preserve the starting terse policy at these same prefixes, including its thinking.
+            hidden = mx.stop_gradient(completion_hidden(model, ids, offset, cached, first_layer)[0])
+            mx.eval(hidden)
+        else:
+            original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
+            original_ids, original_offset = training_tokens(original, tokenizer)
+            native = original_ids[original_offset:]
+            native_close = native.index(close)
+            if ids[:offset] != original_ids[:original_offset] or completion[closing + 1:] != native[native_close + 1:]:
+                raise ValueError(f"{row['id']}: teacher prompt or final reply changed")
+            if teacher["targets"][cursor:cursor + len(native)].tolist() != native:
+                raise ValueError(f"{row['id']}: teacher feature order/token mismatch")
+            hidden = teacher["hidden"][cursor + native_close + 1:cursor + len(native)]
+            cursor += len(native)
         rejected_responses = []
         if args.preference_weight and row.get("rejected_assistant"):
             rejected = {**row, "assistant": row["rejected_assistant"], "ending": row["rejected_ending"]}
@@ -256,8 +265,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             preferences += 1
             if preferences % 25 == 0:
                 print(f"Cached {preferences} frozen preference ratios", flush=True)
-        records[row["split"]].append((ids, offset, closing, hidden, cached, preference, row.get("loss_weight", 1)))
-        cursor += len(native)
+        records[row["split"]].append((ids, offset, closing, hidden, cached, preserve, preference, row.get("loss_weight", 1)))
         if sum(map(len, records.values())) % 50 == 0:
             print(f"Cached {sum(map(len, records.values()))} training/validation responses", flush=True)
     if cursor != len(teacher["targets"]) or not all(records.values()):
@@ -267,9 +275,12 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     del teacher
     grad_checkpoint(model.layers[0])
 
-    def loss(model, ids, offset, closing, reference, cached, preference):
+    def loss(model, ids, offset, closing, reference, cached, preserve, preference):
         hidden = completion_hidden(model, ids, offset, cached, first_layer)
         logits = model.lm_head(hidden).astype(mx.float32)
+        if preserve:
+            divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
+            return args.kl * .5 * (divergence.mean() + divergence[:, :8].mean())
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
                                 args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only)
@@ -284,10 +295,10 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     schedule = random.Random(args.seed).choices(records["train"], weights=[r[-1] for r in records["train"]], k=args.iters)
 
     def example(row, training):
-        ids, offset, closing, hidden, cached, preference, _ = row
+        ids, offset, closing, hidden, cached, preserve, preference, _ = row
         reference = nn.log_softmax(model.lm_head(hidden[None]).astype(mx.float32), axis=-1)
         mx.eval(reference)
-        result = (gradient if training else loss)(model, ids, offset, closing, reference, cached, preference)
+        result = (gradient if training else loss)(model, ids, offset, closing, reference, cached, preserve, preference)
         mx.eval(result)
         return result
 
@@ -328,7 +339,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
-    p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies and the closing boundary without imitating sampled notes")
+    p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies without supervising sampled notes or the closing boundary")
     p.add_argument("--start-weight", type=float, default=1)
     p.add_argument("--answer-weight", type=float, default=0, help="Paired mode: supervise verified replies without rewarding their terminator")
     p.add_argument("--preference-weight", type=float, default=0, help="Paired mode: add DPO loss against labeled incorrect responses")

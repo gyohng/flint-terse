@@ -40,7 +40,8 @@ def main(argv=None, loaded=None):
         del parts
     rows = [row for path in args.input for row in read_rows(path)]
     if args.original_reasoning:
-        rows = [{**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}} for row in rows]
+        rows = [{**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
+                for row in rows if not row.get("preserve_only")]
     if args.examples:
         examples = [message for row in read_rows(args.examples) for message in row["messages"]]
         rows = [{**row, "messages": with_examples(row["messages"], examples)} for row in rows]
