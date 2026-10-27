@@ -219,7 +219,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     model.train()
     close = tokenizer.convert_tokens_to_ids("</think>")
     for row in (r for path in args.paired for r in read_rows(path)):
-        if (row.get("answer_only") or row.get("preserve_only")) and not args.answer_only:
+        if row.get("answer_only") and not args.answer_only:
             raise ValueError(f"{row['id']}: sampled notes require --answer-only")
         ids, offset = training_tokens(row, tokenizer)
         completion = ids[offset:]
@@ -350,6 +350,7 @@ def main(argv=None, loaded=None):
     p.add_argument("--iters", type=int, default=100)
     p.add_argument("--rank", type=int, default=8)
     p.add_argument("--layers", type=int, default=16)
+    p.add_argument("--train-layers", type=int, help="When resuming paired training, update only the last N layers and retain the rest")
     p.add_argument("--targets", nargs="+", default=["self_attn.q_proj", "self_attn.v_proj"])
     p.add_argument("--learning-rate", type=float, default=1e-5)
     p.add_argument("--kl", type=float, default=0.1)
@@ -374,6 +375,8 @@ def main(argv=None, loaded=None):
         p.error("--answer-only requires paired training without reasoning supervision or preferences")
     if args.think_adapter and (not args.paired or args.resume):
         p.error("--think-adapter requires paired training and cannot be combined with --resume")
+    if args.train_layers is not None and (not args.resume or not args.paired or not 1 <= args.train_layers <= args.layers):
+        p.error('--train-layers requires paired --resume and must be between 1 and --layers')
     if args.paired and (args.batch_size != 1 or any(not t.startswith(("self_attn.", "mlp.")) for t in args.targets)):
         p.error("Paired training uses batch size 1 and transformer adapters, keeping the output head frozen")
     output = Path(args.output)
@@ -402,8 +405,9 @@ def main(argv=None, loaded=None):
 
     flint.scaled_dot_product_attention = training_attention
     model.freeze()
+    previous = json.loads((Path(args.resume) / "adapter_config.json").read_text()) if args.resume else None
     lora = {
-        "rank": args.rank, "scale": 2.0, "dropout": 0.0,
+        "rank": args.rank, "scale": previous["lora_parameters"]["scale"] if previous else 2.0, "dropout": 0.0,
         "keys": args.targets + (["model.embed_tokens"] if args.think_adapter else []),
     }
     linear_to_lora_layers(model, args.layers, lora)
@@ -420,13 +424,22 @@ def main(argv=None, loaded=None):
         frozen_weights = freeze_thinking_embedding(model.model.embed_tokens,
             mx.load(str(Path(args.think_adapter) / "adapters.safetensors")), previous["lora_parameters"]["scale"])
     if args.resume:
-        previous = json.loads((Path(args.resume) / "adapter_config.json").read_text())
         previous_lora = previous["lora_parameters"]
-        if (previous["model"] != args.model or previous["num_layers"] > args.layers
+        same_base = Path(previous['model']).resolve() == Path(args.model).resolve()
+        if not same_base and Path(args.model).suffix.lower() == '.gguf' and previous.get('base_model', {}).get('sha256'):
+            from checkpoint import sha256
+            same_base = sha256(args.model) == previous['base_model']['sha256']
+        if (not same_base or previous["num_layers"] > args.layers
             or not set(previous_lora["keys"]) <= set(args.targets)
             or any(previous_lora[k] != lora[k] for k in ("rank", "scale", "dropout"))):
             p.error("--resume must match model/rank/scale and retain every existing adapter layer and target")
         model.load_weights(str(Path(args.resume) / "adapters.safetensors"), strict=False)
+    if args.train_layers is not None:
+        for layer in model.layers[:-args.train_layers]:
+            layer.freeze()
+        trainable = dict(tree_flatten(model.trainable_parameters()))
+        frozen_weights = {name: value for name, value in tree_flatten(model.parameters())
+                          if name.endswith(('.lora_a', '.lora_b')) and name not in trainable}
     print_trainable_parameters(model)
     output.mkdir(parents=True)
     config = {

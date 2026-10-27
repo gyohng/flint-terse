@@ -43,6 +43,8 @@ Thinking reductions above use shared correct math/code answers. The pipeline als
 
 Across both 100-task evaluation sets, the repaired opening adapter scores **166/200 versus 172/200**, with **79.1% less thinking** on shared correct answers. Its math score is 103/120 versus 99/120, but code falls to **63/80 versus 73/80**. Code accuracy is the current repair target; the overall score hides that regression.
 
+The all-layer attention adapter at 55% strength restores code to **72/80 versus 73/80**, with **177/200 versus 172/200** overall. Including the interval check, thinking falls **69.8%**. Ordinary prompts still produce verbose narration, so this is not a finished release.
+
 `--method attention` trains query/value LoRA directly from the unchanged base; `--layers N` sets its depth (Flint has 49 layers). `--initial-adapter PATH` can keep an existing thinking-token update frozen during attention training. `--adapter-scale` adjusts the exported update strength without changing the FP32 matrices or base weights. `--method tokens` adapts both `<think>` and `</think>` embeddings. Final replies containing thinking delimiters fail the release check, even if aggregate completion counts improve.
 
 For the pinned GGUF, the default recipe reproduces the repaired opening adapter at 90% strength: 100 updates, learning rate `.0001`, and an additional embedding-norm bound of `.1`. It starts from the supplied `data/opening-init` style adapter, learned in the original MLX experiment, then trains against the exact GGUF. No MLX checkpoint download is needed. `--from-scratch` skips that initializer; other checkpoints start from scratch unless you supply `--initial-adapter`.
@@ -52,6 +54,8 @@ For the pinned GGUF, the default recipe reproduces the repaired opening adapter 
 For attention training, `--preference-weight 1` adds the existing DPO objective against checked incorrect responses in the adaptive corpus. The reference is the frozen starting model, including any thinking-token adapter supplied with `--initial-adapter`.
 
 For answer repair, `build-preferences --answer-repair` pairs captured student notes with reviewed, test-verified code from the input corpus. Truncated or malformed notes are excluded. Train these pairs with `finetune --method attention --answer-only --initial-adapter PATH`: this supervises the final reply, retaining the original-reasoning answer probability teacher. Sampled notes and the closing boundary receive no direct imitation loss. Rows marked `preserve_only` instead match the starting terse model's probabilities at the same prefixes throughout the response. This is answer distillation with probability-based retention, not full on-policy distillation.
+
+`finetune --method attention --resume-adapter PATH --train-layers 8` continues an attention adapter at its saved scale, updating only its last eight layers. Earlier adapter layers remain frozen and are included unchanged in the export. `data/casual-retention.jsonl` pairs 29 reviewed everyday-prompt examples with 410 retention examples for this style pass.
 
 Output goes to `adapters/flint-terse`: the FP32 adapter in GGUF and Safetensors, its configuration identifying the exact base, and a Jinja override removing only `| replace("\x00", "")`. This leaves the checked-in release files untouched. No instruction is appended to the prompt. The base GGUF stays untouched. The loaded model identifier is **`flint-terse`**.
 

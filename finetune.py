@@ -66,7 +66,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
                    help='Adapt the opening token, both thinking boundaries, or attention projections')
-    p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
+    p.add_argument('--layers', type=int, help='Attention adapter depth; defaults to 8, or the resumed adapter depth')
+    p.add_argument('--train-layers', type=int, help='When resuming an attention adapter, update only the last N layers')
     p.add_argument('--preference-weight', type=float, default=0,
                    help='Attention training: prefer checked correct responses over labeled mistakes')
     p.add_argument('--answer-only', action='store_true',
@@ -75,6 +76,7 @@ def main(argv=None, loaded=None):
                    help='Multiply the learned update at export without changing its FP32 matrices')
     start = p.add_mutually_exclusive_group()
     start.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
+    start.add_argument('--resume-adapter', help='Continue an attention adapter at its saved scale')
     start.add_argument('--from-scratch', action='store_true', help='Skip the packaged opening-token initializer')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
@@ -90,6 +92,12 @@ def main(argv=None, loaded=None):
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
+    if args.resume_adapter and args.method != 'attention':
+        p.error('--resume-adapter requires --method attention')
+    if args.train_layers is not None and not args.resume_adapter:
+        p.error('--train-layers requires --resume-adapter')
+    if args.layers is None:
+        args.layers = json.loads((Path(args.resume_adapter) / 'adapter_config.json').read_text())['num_layers'] if args.resume_adapter else 8
     if args.preference_weight < 0 or (args.preference_weight and args.method != 'attention'):
         p.error('--preference-weight must be nonnegative and requires --method attention')
     if args.answer_only and (args.method != 'attention' or args.preference_weight):
@@ -155,6 +163,8 @@ def main(argv=None, loaded=None):
                 import train
                 train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
+                    *(['--resume', args.resume_adapter] if args.resume_adapter else []),
+                    *(['--train-layers', str(args.train_layers)] if args.train_layers is not None else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--preference-weight', str(args.preference_weight),
                     *(['--answer-only'] if args.answer_only else []),

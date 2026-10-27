@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
+from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss
@@ -176,8 +176,8 @@ class TrainingTests(unittest.TestCase):
 
     def test_retention_uses_the_starting_policy_without_native_teacher_features(self):
         model = tiny_flint()
-        initial = dict(tree_flatten(model.trainable_parameters()))
-        mx.eval(initial)
+        ids, offset = [2, 3, 6, 12, 7, 22, 1], 2
+        initial = completion_logp(model, ids, offset).item()
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             features, corpus = folder / "features.safetensors", folder / "corpus.jsonl"
@@ -190,11 +190,47 @@ class TrainingTests(unittest.TestCase):
                 answer_weight=1, opening_only=False, answer_only=True, preference_weight=0,
                 compact_preference_weight=0, preference_beta=.1, output=folder)
             tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
-            with patch("train.training_tokens", return_value=([2, 3, 6, 12, 7, 22, 1], 2)), \
+            with patch("train.training_tokens", return_value=(ids, offset)), \
                  patch("train.grad_checkpoint"), patch("mlx_lm.models.flint.scaled_dot_product_attention", training_attention):
                 train_paired(model, tokenizer, args)
-            for key, value in tree_flatten(model.trainable_parameters()):
-                self.assertLess(mx.max(mx.abs(value - initial[key])).item(), 1e-6)
+            self.assertAlmostEqual(completion_logp(model, ids, offset).item(), initial, delta=1e-4)
+
+    def test_resuming_keeps_saved_scale_and_frozen_adapter_layers(self):
+        from mlx_lm.tuner.utils import remove_lora_layers
+
+        model = tiny_flint()
+        for _, module in model.named_modules():
+            if hasattr(module, 'lora_b'):
+                module.lora_b = mx.random.normal(module.lora_b.shape) * .01
+        weights = dict(tree_flatten(model.trainable_parameters()))
+        mx.eval(weights)
+        remove_lora_layers(model)
+        ids, offset = [2, 3, 6, 12, 7, 22, 1], 2
+        hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source, output = directory / 'source', directory / 'output'
+            source.mkdir()
+            mx.save_safetensors(str(source / 'adapters.safetensors'), weights)
+            (source / 'adapter_config.json').write_text(json.dumps({'model': 'tiny', 'num_layers': 2,
+                'lora_parameters': {'rank': 2, 'scale': .7, 'dropout': 0,
+                                    'keys': ['self_attn.q_proj', 'self_attn.v_proj']}}))
+            features, corpus = directory / 'features.safetensors', directory / 'corpus.jsonl'
+            mx.save_safetensors(str(features), {'hidden': mx.concatenate([hidden, hidden]),
+                'targets': mx.array(ids[offset:] * 2)}, metadata={'model': 'tiny'})
+            corpus.write_text('\n'.join(json.dumps({'id': split, 'split': split, 'assistant': {}, 'teacher_reasoning': 'native'})
+                                        for split in ('train', 'valid')))
+            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
+            with patch('train.training_tokens', return_value=(ids, offset)), patch('train.grad_checkpoint'):
+                train_main(['--model', 'tiny', '--paired', str(corpus), '--teacher-features', str(features),
+                    '--resume', str(source), '--layers', '2', '--train-layers', '1', '--rank', '2',
+                    '--iters', '1', '--accumulate', '1', '--output', str(output)], loaded=(model, tokenizer))
+            saved = mx.load(str(output / 'adapters.safetensors'))
+            self.assertEqual(saved.keys(), weights.keys())
+            for name in weights:
+                if name.startswith('model.layers.0.'):
+                    self.assertTrue(bool((saved[name] == weights[name]).all()))
+            self.assertEqual(json.loads((output / 'adapter_config.json').read_text())['lora_parameters']['scale'], .7)
 
     def test_answer_repair_does_not_supervise_sampled_thought_tokens(self):
         for closing in (1, 20):
