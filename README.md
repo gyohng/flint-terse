@@ -39,7 +39,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 
 `--steps` counts optimizer updates, each accumulating four examples. Validation selects the saved checkpoint. `--no-promote` keeps evaluation under `flint-terse-eval`.
 
-The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/direct-prose.jsonl` has 190 prose/tool examples and 401 math/code retention examples. Its 164 prose examples allow empty thinking while keeping the full reviewed reply. All 212 code responses pass their tests; 62 also have checked incorrect alternatives for preference training. The 87 prose wording variants keep final replies unchanged. The original few examples were insufficient.
+The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/direct-prose.jsonl` has 190 prose/tool examples and 401 math/code retention examples. Its 139 simple writing and conversational examples allow empty thinking; technical explanations and plans retain short working notes. Reviewed final replies stay unchanged. All 212 code responses pass their tests; 62 also have checked incorrect alternatives for preference training. The 87 prose wording variants keep final replies unchanged. The original few examples were insufficient.
 
 To extend the corpus:
 
