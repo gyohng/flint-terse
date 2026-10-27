@@ -83,11 +83,12 @@ case "${1:-help}" in
     shift
     node load_lmstudio.mjs "$@"
     ;;
-  finetune)
+  finetune|deploy)
+    command="$1"
     shift
     [[ -x .venv/bin/python ]] || ./run.sh setup
     [[ -d .tools/lms-sdk/node_modules/@lmstudio/sdk ]] || ./run.sh setup-lmstudio
-    .venv/bin/python finetune.py "$@"
+    .venv/bin/python "$command.py" "$@"
     ;;
   test)
     .venv/bin/python -m unittest discover -s tests -v
@@ -96,6 +97,7 @@ case "${1:-help}" in
     cat <<'EOF'
 ./run.sh finetune # Find/download the official INT4 GGUF, train, evaluate, load flint-terse
 ./run.sh finetune /path/to/flint.gguf --output release/my-flint-terse
+./run.sh deploy # Find/download the unchanged base and load the packaged adapter
 ./run.sh setup
 ./run.sh setup-gguf
 ./run.sh download # Find/download the pinned official GGUF; accepts other checkpoints
