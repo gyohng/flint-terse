@@ -7,10 +7,12 @@ import re
 import statistics
 from pathlib import Path
 
-from mlx_lm import generate, load
+from mlx_lm import generate
 from mlx_lm.sample_utils import make_sampler
 
-from corpus import BASE, read_rows, split_thinking, trace_cache, trace_scores, training_tokens
+from checkpoint import DEFAULT_MODEL
+from gguf_model import load_model as load, load_tokenizer
+from corpus import read_rows, split_thinking, trace_cache, trace_scores, training_tokens
 
 
 def passages(text):
@@ -102,7 +104,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
-    p.add_argument("--model", default=BASE)
+    p.add_argument("--model", default=DEFAULT_MODEL)
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--build", action="store_true", help="Write editing prompts for batch-capture")
     mode.add_argument("--selections", help="Use passage selections from a completed batch-capture")
@@ -120,8 +122,7 @@ def main():
     if len({r["id"] for r in rows}) != len(rows):
         p.error("Duplicate task IDs")
     if args.build:
-        from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(args.model)
+        tokenizer = load_tokenizer(args.model)
     else:
         model, tokenizer = load(args.model)
         model.eval()

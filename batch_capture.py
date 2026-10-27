@@ -9,7 +9,8 @@ from mlx_lm import load
 from mlx_lm.generate import BatchGenerator
 from mlx_lm.sample_utils import apply_top_k, apply_top_p, make_sampler
 
-from corpus import BASE, check_answer, configure_adapter_tokenizer, parse_assistant, prompt_text, read_rows, report, select_trace, split_thinking
+from checkpoint import DEFAULT_MODEL, resolve_checkpoint
+from corpus import check_answer, configure_adapter_tokenizer, parse_assistant, prompt_text, read_rows, report, select_trace, split_thinking
 
 
 def request_sampler(seed, temperature):
@@ -32,7 +33,7 @@ def main():
     p.add_argument("input")
     p.add_argument("--output", required=True)
     p.add_argument("--candidates-output", help="Keep every attempt for correctness preference pairs")
-    p.add_argument("--model", default=BASE)
+    p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--adapter")
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--samples", type=int, default=1)
@@ -58,7 +59,17 @@ def main():
             if not isinstance(thought, str) or any(t in thought for t in ("<think>", "</think>")) or "generation_prefix" in row:
                 p.error(f"{row['id']}: need plain reasoning_content and no existing generation_prefix")
             row["generation_prefix"] = f"<think>{thought}</think>"
-    model, tokenizer = load(args.model, adapter_path=args.adapter)
+    if args.model.lower().endswith('.gguf'):
+        from gguf_model import load_model
+        path, source = resolve_checkpoint(args.model)
+        if args.adapter:
+            config = json.loads((Path(args.adapter) / 'adapter_config.json').read_text())
+            if config.get('base_model', {}).get('sha256', source['sha256']) != source['sha256']:
+                p.error('The adapter uses a different GGUF checkpoint')
+        args.model = str(path)
+        model, tokenizer = load_model(args.model, adapter_path=args.adapter)
+    else:
+        model, tokenizer = load(args.model, adapter_path=args.adapter)
     configure_adapter_tokenizer(tokenizer, args.adapter)
     mx.random.seed(args.seed)
     prompts = [tokenizer.encode(prompt_text(row, tokenizer) + row.get("generation_prefix", ""), add_special_tokens=False)

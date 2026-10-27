@@ -98,6 +98,26 @@ def code_rows(limit=200):
     return prompts, holdout
 
 
+def code_prose_rows(source, excluded):
+    """Keep checked coding contracts and splits; ask for a normal explanatory reply."""
+    suffix = '\nYour final answer must contain only Python code, including necessary imports.'
+    result = []
+    for row in source:
+        if row.get('family') != 'code' or row['id'] in excluded or row.get('split') not in ('train', 'valid'):
+            continue
+        if not row.get('approved') or not check_python(row['assistant']['content'], row['tests'], row.get('test_imports', [])):
+            raise ValueError(f"{row['id']}: need a reviewed answer that passes its tests")
+        messages = row['messages']
+        if len(messages) != 1 or messages[0]['role'] != 'user' or not messages[0]['content'].endswith(suffix):
+            raise ValueError(f"{row['id']}: unexpected coding prompt format")
+        prompt = (messages[0]['content'].removesuffix(suffix)
+                  + '\nShow the Python function first, then explain the approach and give a usage example.')
+        result.append({'id': 'prose-code-' + row['id'], 'family': 'code', 'split': row['split'],
+                       'messages': [{'role': 'user', 'content': prompt}],
+                       'tests': row['tests'], 'test_imports': row.get('test_imports', [])})
+    return result
+
+
 def chat_rows(subset, count, rng, used_ids, used_prompts):
     """Import prompts only; Flint supplies its own reasoning and final reply."""
     def page(offset, length=100):
@@ -273,8 +293,17 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--final-eval", action="store_true", help="Create 100 further math/code tasks, disjoint from the initial sets")
     p.add_argument("--expand", metavar="OUTPUT", help="Collect new math/code and SmolTalk prompts for native-trace training")
+    p.add_argument('--code-prose', metavar='OUTPUT', help='Turn remaining checked training-code tasks into conversational collection prompts')
     p.add_argument("--fresh-eval", metavar="OUTPUT", help="Reserve 60 math and 40 code tasks absent from data and prior captures")
     args = p.parse_args()
+    if args.code_prose:
+        if Path(args.code_prose).exists():
+            p.error(f'{args.code_prose} already exists')
+        excluded = {re.search(r'mbpp-\d+', r['id'])[0] for r in read_rows('data/code-prose-paired.jsonl')}
+        rows = code_prose_rows(read_rows('data/direct-prose.jsonl'), excluded)
+        write_rows(args.code_prose, rows)
+        print(f'Saved {len(rows)} distinct conversational coding prompts; collect and review new replies before training.')
+        return
     if args.fresh_eval and Path(args.fresh_eval).exists():
         p.error(f"{args.fresh_eval} already exists")
     sources = Path("data/sources")

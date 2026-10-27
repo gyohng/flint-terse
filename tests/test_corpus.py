@@ -10,12 +10,30 @@ from unittest.mock import patch
 from code_checks import check_python
 from corpus import capture, check_answer, generate_api, prefix_template
 from finetune import accuracy_can_pass, read_baseline
-from make_corpus import arithmetic
+from make_corpus import arithmetic, code_prose_rows
 from preferences import add_preferences, repair_answers, retain_policy
 from prune import editing_messages, join_passages, passages, reasoning_shift, selected_passages
 
 
 class CorpusTests(unittest.TestCase):
+    def test_code_prose_expansion_preserves_contracts_and_splits(self):
+        task = {'family': 'code', 'approved': True,
+                'messages': [{'role': 'user', 'content': 'Double x.\nExamples/tests:\nassert f(2) == 4\nYour final answer must contain only Python code, including necessary imports.'}],
+                'assistant': {'content': 'def f(x): return 2*x'},
+                'tests': ['assert f(2) == 4', 'assert f(3) == 6'], 'test_imports': []}
+        rows = [{**task, 'id': identity, 'split': split} for identity, split in
+                [('mbpp-101', 'train'), ('mbpp-102', 'valid'), ('mbpp-103', 'train'), ('mbpp-104', 'test')]]
+        result = code_prose_rows(rows, {'mbpp-103'})
+        self.assertEqual([(r['id'], r['split']) for r in result], [('prose-code-mbpp-101', 'train'), ('prose-code-mbpp-102', 'valid')])
+        for row in result:
+            self.assertNotIn('assistant', row)
+            self.assertNotIn('approved', row)
+            self.assertEqual(row['tests'], task['tests'])
+            self.assertIn('assert f(2) == 4', row['messages'][0]['content'])
+            self.assertNotIn('only Python code', row['messages'][0]['content'])
+        with self.assertRaisesRegex(ValueError, 'passes its tests'):
+            code_prose_rows([{**rows[0], 'assistant': {'content': 'def f(x): return x*x'}}], set())
+
     def test_policy_retention_keeps_checked_generated_notes_and_answers(self):
         row = {'id': 'code', 'messages': [{'role': 'user', 'content': 'Double x.'}], 'split': 'train',
                'tests': ['assert f(2) == 4', 'assert f(3) == 6'], 'teacher_reasoning': 'old',

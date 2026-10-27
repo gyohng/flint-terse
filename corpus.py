@@ -12,6 +12,8 @@ import urllib.request
 from fractions import Fraction
 from pathlib import Path
 
+from checkpoint import DEFAULT_MODEL
+
 BASE = "models/flint-int4"
 
 
@@ -180,9 +182,9 @@ def parse_assistant(reasoning, answer, tools):
 
 
 def prepare(args):
-    from transformers import AutoTokenizer
+    from gguf_model import load_tokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = load_tokenizer(args.model)
     rows = read_rows(args.input)
     splits = {"train": [], "valid": []}
     seen_ids, seen_prompts = set(), set()
@@ -336,16 +338,11 @@ def capture(args):
         rows = rows[len(saved):]
         print(f'Resuming after {len(saved)} saved tasks', flush=True)
     if args.api:
-        from transformers import AutoTokenizer
+        from gguf_model import load_tokenizer
 
         if args.adapter:
             raise ValueError("API evaluation uses the already merged/deployed model; omit --adapter")
-        if Path(args.tokenizer).suffix.lower() == '.gguf':
-            from gguf import GGUFReader
-            from gguf_model import tokenizer_from_gguf
-            tokenizer = tokenizer_from_gguf(GGUFReader(args.tokenizer))
-        else:
-            tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+        tokenizer = load_tokenizer(args.tokenizer)
     else:
         model, tokenizer = load(args.model, adapter_path=args.adapter)
         configure_adapter_tokenizer(tokenizer, args.adapter)
@@ -399,7 +396,7 @@ def capture(args):
 
 def rewrite(args):
     import mlx.core as mx
-    from mlx_lm import load
+    from gguf_model import load_model as load
     from mlx_lm.generate import batch_generate
     from mlx_lm.sample_utils import make_sampler
 
@@ -577,7 +574,7 @@ def trace_scores(model, tokenizer, row, cache=None, per_token=False):
 
 def score(args):
     """Teacher-forced likelihood of an edited trace, not a correctness judge."""
-    from mlx_lm import load
+    from gguf_model import load_model as load
 
     model, tokenizer = load(args.model, adapter_path=args.adapter)
     configure_adapter_tokenizer(tokenizer, args.adapter)
@@ -591,7 +588,7 @@ def main():
     for name in ("prepare", "capture", "rewrite", "score"):
         p = sub.add_parser(name)
         p.add_argument("input")
-        p.add_argument("--model", default=BASE)
+        p.add_argument("--model", default=DEFAULT_MODEL)
         if name != "score":
             p.add_argument("--output", default="data/prepared" if name == "prepare" else None, required=name != "prepare")
             p.add_argument("--max-tokens", type=int, default=2048 if name == "prepare" else 4096)
@@ -606,7 +603,7 @@ def main():
             p.add_argument("--samples", type=int, default=1, help="Corpus only: keep the shortest checked-correct native trace")
             p.add_argument("--api", help="Completions API, e.g. http://localhost:1234/v1")
             p.add_argument("--api-chat", action="store_true", help="Use chat/completions with structured tools, as OpenClaw does")
-            p.add_argument("--tokenizer", default=BASE, help="Tokenizer for formatting/counting API requests")
+            p.add_argument("--tokenizer", default=DEFAULT_MODEL, help="Tokenizer for formatting/counting API requests")
         if name == "rewrite":
             p.add_argument("--reasoning-slack", type=float, default=6.0, help="Allowed increase in reasoning mean NLL (nats/token)")
             p.add_argument("--answer-slack", type=float, default=0.2, help="Allowed increase in answer mean NLL (nats/token)")

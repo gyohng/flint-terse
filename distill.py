@@ -2,9 +2,9 @@
 
 import argparse
 
-from transformers import AutoTokenizer
-
-from corpus import BASE, read_rows, select_trace, split_thinking, training_tokens, write_rows
+from checkpoint import DEFAULT_MODEL
+from gguf_model import load_tokenizer
+from corpus import read_rows, select_trace, split_thinking, training_tokens, write_rows
 
 
 def with_examples(messages, examples):
@@ -19,6 +19,7 @@ def main():
     p.add_argument("command", choices=("build", "select", "pair"))
     p.add_argument("input", nargs="+")
     p.add_argument("--output", required=True)
+    p.add_argument('--model', default=DEFAULT_MODEL, help='GGUF or tokenizer checkpoint for pairing and token limits')
     p.add_argument("--examples", default="data/style-examples.jsonl")
     p.add_argument("--baseline", nargs="+", help="Retain the original checked trace when the terse teacher fails or is longer")
     p.add_argument("--max-tokens", type=int, default=8192)
@@ -36,7 +37,7 @@ def main():
         write_rows(args.output, output)
         print(f"Conditioned {len(output)} prompts with {len(examples) // 2} demonstrations")
         return
-    tokenizer = AutoTokenizer.from_pretrained(BASE)
+    tokenizer = load_tokenizer(args.model)
     baseline = {r["id"]: r for path in (args.baseline or []) for r in read_rows(path)}
     if args.command == "pair":
         output = []

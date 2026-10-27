@@ -140,10 +140,23 @@ def tokenizer_from_gguf(reader):
                                                fast.convert_tokens_to_ids('<|observation|>')})
 
 
+def load_tokenizer(path):
+    if Path(path).suffix.lower() == '.gguf':
+        if not Path(path).is_file():
+            from checkpoint import resolve_checkpoint
+            path, _ = resolve_checkpoint(path)
+        return tokenizer_from_gguf(gguf.GGUFReader(path))
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(path)
+
+
 def load_model(path, adapter_path=None, **kwargs):
     if Path(path).suffix.lower() != '.gguf':
         from mlx_lm import load
         return load(path, adapter_path=adapter_path, **kwargs)
+    if not Path(path).is_file():
+        from checkpoint import resolve_checkpoint
+        path, _ = resolve_checkpoint(path)
     reader = gguf.GGUFReader(path)
     def field(name):
         return reader.fields['flint.' + name].contents()

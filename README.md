@@ -44,6 +44,8 @@ The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 Open
 
 `data/code-prose-paired.jsonl` adds 32 distinct conversational coding tasks, each in three phrasings. Variants share checked implementations, short algorithm notes and reviewed final replies, and stay in their parent's train/validation split. These are 96 examples, not 96 independent tasks.
 
+`data/code-prose-extra-prompts.jsonl` contains 180 further tasks from the checked training corpus, now requesting normal explanatory replies. Recreate it at a new path with `./run.sh build-corpus --code-prose OUTPUT`. Collect and review fresh responses before pairing short notes. `batch-capture` defaults to the same pinned GGUF and supports continuous batching for this collection.
+
 To extend the corpus:
 
 1. Collect several native responses per **training** prompt using `capture` or `batch-capture`. Keep evaluation prompts separate.
@@ -53,7 +55,7 @@ To extend the corpus:
 
 Rows contain `id`, `messages`, `split`, `assistant`, and a numeric, text, JSON, tool-call or Python-test check. Paired rows also retain `teacher_reasoning`. `build-preferences --shortest-correct` selects checked samples by thinking length for supervised training. `build-preferences` attaches checked mistakes; its `--answer-repair` mode pairs sampled student notes with verified final answers for `--answer-only` training.
 
-`build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and [sanitized MBPP](https://github.com/google-research/google-research/blob/master/mbpp/sanitized-mbpp.json). Expanded prose prompts come from [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk). Raw captures require review before training. Every command accepts `--help`.
+`build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and Google's [MBPP](https://huggingface.co/datasets/google-research-datasets/mbpp) (CC BY 4.0; prompts adapted). Expanded prose prompts come from [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk). Raw captures require review before training. Collection, rewriting, pruning, pairing and probability scoring accept `--model` and default to the pinned GGUF. Every command accepts `--help`.
 
 ## Evaluation
 
