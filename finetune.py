@@ -56,12 +56,13 @@ def main(argv=None, loaded=None):
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
     p.add_argument('--output', type=Path, default=Path('adapters/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
-    p.add_argument('--method', choices=('opening', 'attention'), default='opening')
+    p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
+                   help='Adapt the opening token, both thinking boundaries, or attention projections')
     p.add_argument('--layers', type=int, default=8, help='Last N layers to adapt with --method attention')
     p.add_argument('--adapter-scale', type=float, default=1,
                    help='Multiply the learned update at export without changing its FP32 matrices')
     p.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
-    p.add_argument('--learning-rate', type=float, help='Defaults to .001 for opening, .000005 for attention')
+    p.add_argument('--learning-rate', type=float, help='Defaults to .001 for token adapters, .000005 for attention')
     p.add_argument('--max-change', type=float, default=1,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--max-accuracy-drop', type=float, default=2,
@@ -130,7 +131,8 @@ def main(argv=None, loaded=None):
                     '--output', str(args.output)], loaded=loaded)
             else:
                 train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
-                    '--think-opening', '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
+                    '--think-tokens' if args.method == 'tokens' else '--think-opening',
+                    '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--steps', str(args.steps), '--max-change', str(args.max_change),
                     '--learning-rate', str(args.learning_rate),
                     '--max-tokens', '16384', '--output', str(args.output),
@@ -183,6 +185,8 @@ def main(argv=None, loaded=None):
         if label == 'base':
             run('lms', 'unload', identifier)
     base, terse = results['base'], results['terse']
+    if any(tag in (r['assistant'].get('content') or '') for r in terse for tag in ('<think>', '</think>')):
+        raise SystemExit('Thinking delimiters leaked into a final reply. Inspect the saved answers.')
     baseline = sum(r['correct'] is True for r in base)
     adapted = sum(r['correct'] is True for r in terse)
     paired = [(b, t) for b, t in zip(base, terse) if b['correct'] is True and t['correct'] is True]
