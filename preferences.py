@@ -71,7 +71,7 @@ def repair_answers(rows, candidates):
     return result
 
 
-def retain_policy(rows, candidates):
+def retain_policy(rows, candidates, preserve=True):
     by_id = defaultdict(list)
     for candidate in candidates:
         by_id[candidate['id']].append(candidate)
@@ -85,11 +85,16 @@ def retain_policy(rows, candidates):
                 continue
             notes, answer, clean = split_thinking(candidate['text'])
             if clean and answer.strip() and check_answer(row, answer, True) is True:
-                usable.append((candidate['output_tokens'], parse_assistant(notes, answer, row.get('tools', []))))
+                length = (candidate.get('reasoning_tokens', len(notes)), candidate['output_tokens'])
+                usable.append((length, parse_assistant(notes, answer, row.get('tools', []))))
         if usable:
             kept = {k: v for k, v in row.items() if k not in
-                    ('teacher_reasoning', 'rejected_assistant', 'rejected_ending', 'answer_only')}
-            kept.update(assistant=min(usable, key=lambda r: r[0])[1], approved=True, preserve_only=True)
+                    ('teacher_reasoning', 'rejected_assistant', 'rejected_ending', 'answer_only', 'preserve_only')}
+            kept.update(assistant=min(usable, key=lambda r: r[0])[1], approved=True)
+            if preserve:
+                kept['preserve_only'] = True
+            else:
+                kept['teacher_reasoning'] = kept['assistant']['reasoning_content']
             retained.append(kept)
     return retained
 
@@ -102,20 +107,21 @@ def main():
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--answer-repair", action="store_true", help="Pair sampled notes with verified code; train with --answer-only")
     mode.add_argument('--policy-retention', action='store_true', help='Retain checked correct responses on the model’s own reasoning paths')
+    mode.add_argument('--shortest-correct', action='store_true', help='Supervise the shortest checked thinking, keeping its generated final answer')
     args = p.parse_args()
     rows = [r for path in args.input for r in read_rows(path)]
     if len({r["id"] for r in rows}) != len(rows):
         p.error("Duplicate corpus IDs")
     candidates = [r for path in args.candidates for r in read_rows(path)]
     build = retain_policy if args.policy_retention else repair_answers if args.answer_repair else add_preferences
-    rows = build(rows, candidates)
+    rows = retain_policy(rows, candidates, preserve=False) if args.shortest_correct else build(rows, candidates)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("x") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    counts = Counter(r["split"] for r in rows if args.policy_retention or args.answer_repair or "rejected_assistant" in r)
-    kind = 'policy retention' if args.policy_retention else 'answer repairs' if args.answer_repair else 'correctness preferences'
+    counts = Counter(r["split"] for r in rows if args.policy_retention or args.shortest_correct or args.answer_repair or "rejected_assistant" in r)
+    kind = 'shortest correct responses' if args.shortest_correct else 'policy retention' if args.policy_retention else 'answer repairs' if args.answer_repair else 'correctness preferences'
     print(f"Saved {len(rows)} pairs; {kind}: {dict(counts)}")
 
 

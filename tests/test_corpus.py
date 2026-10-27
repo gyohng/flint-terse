@@ -34,6 +34,13 @@ class CorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'prompt differs'):
             retain_policy([row], [{**good, 'messages': []}])
 
+        short = {**good, 'reasoning_tokens': 2, 'output_tokens': 30,
+                 'text': '<think>Double.</think>def f(x):\n    result = x + x\n    return result'}
+        result = retain_policy([row], [{**good, 'reasoning_tokens': 5}, short, wrong], preserve=False)[0]
+        self.assertNotIn('preserve_only', result)
+        self.assertEqual(result['teacher_reasoning'], 'Double.')
+        self.assertEqual(result['assistant']['content'], 'def f(x):\n    result = x + x\n    return result')
+
     def test_accuracy_margin_covers_the_whole_selected_test_set(self):
         for total, baseline, done, correct, ungraded, expected in [
             (100, 86, 89, 74, 0, True),
