@@ -1,114 +1,89 @@
 # flint-terse
 
-Teach Flint to use short working notes and equations inside `<think>`, while keeping final replies fluent and complete. Deployment uses the **unchanged original GGUF plus a separate FP32 adapter**. No instruction is appended to the user's message.
+Shorter working notes inside `<think>`, with normal, complete final replies. Deployment uses the **unchanged official Flint GGUF plus a separate FP32 LoRA adapter**. No instruction is appended to the user's message.
 
-**Experimental:** no candidate yet combines the desired brevity with sufficiently preserved code accuracy. The files in `release/flint-terse` are an older experiment, not a validated release.
+The packaged adapter is the best balanced result tested here. **It does not achieve the requested >70% thinking reduction consistently**, especially for conversational coding. The last expanded-corpus run produced thinking-delimiter leakage and duplicated text in final replies, so it was rejected and its evaluation stopped.
 
-## Run
+## Use in LM Studio
 
-Requires Apple Silicon, `uv`, Node.js/npm and regular LM Studio. The launcher installs missing Python and SDK environments.
+Requires Apple Silicon, `uv`, Node.js/npm and regular LM Studio with its `lms` command available.
+
+```sh
+./run.sh deploy
+# Optional longer context:
+./run.sh deploy --context 131072
+```
+
+This finds the exact base in local `models/` or LM Studio folders, downloads it if missing, and loads the packaged adapter as **flint-terse**. `--model-dir PATH` adds a search directory. Deployment installs only the lightweight download and LM Studio dependencies; it does not require the MLX training environment.
+
+The portable bundle is in `release/flint-terse/`: the GGUF adapter, identical FP32 factors in Safetensors, configuration and Jinja override. The GGUF adapter is 13,661,152 bytes. Copy the bundle with these scripts or clone the repo on another Mac, then run `deploy`. The base must match exactly; a different quantization is a different checkpoint.
+
+LM Studio's API identifier is `flint-terse`; its GUI may still display the base model's name. The launcher installs the `flint-terse` sampling preset. Select it in the GUI for the tested sampling settings. Rerun `deploy` after unloading or restarting: the adapter attachment is not persistent.
+
+## Base and precision
+
+Default: [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), **flint-int4-q4_1.gguf**, revision `9c47151036bc2c34331142dda04488bceab2bc9f`.
+
+SHA-256: `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`.
+
+This is the publisher's GGUF counterpart of `RecursiveSI/flint-int4`, distinct from the Q4_K_M conversion. Its integer codes match the MLX export; some BF16 scales and offsets were rounded to FP16 by the publisher. Training uses the actual GGUF coefficients. The base is never merged, rewritten or requantized, and the adapter remains FP32. Export verifies every adapter coefficient after the layout conversion.
+
+The external Jinja override only removes the incompatible `replace("\x00", "")` operation. The downloaded GGUF stays untouched.
+
+Training has run on a 128 GB Mac. LM Studio estimates 28.27 GiB at 64K context, 31.59 GiB at 128K and 38.23 GiB at 256K, with full GPU offload, one prediction slot and no MTP. These are load estimates, not measured peak memory or long-context quality results.
+
+## Results
+
+| Test | Unchanged base | Packaged adapter |
+| --- | ---: | ---: |
+| Math | 99/120 | 105/120 |
+| Code | 73/80 | 72/80 |
+| Combined math/code | 172/200 | 177/200 |
+| Conversational code | 6/6 | 6/6 |
+| OpenClaw scenarios | 6/6 | 6/6 |
+
+Thinking falls by **69.9% on shared correct math/code answers**, **40.7% on 14 ordinary requests completed by both models**, and **6.0% on the six conversational code tasks**. Ordinary prose and coding requests can still produce long internal narration. The packaged adapter is the unchanged `gguf-attention-055` candidate.
+
+Evaluations use temperature 1, top-p .95, top-k 20, min-p 0, repetition penalty 1, seed 42 per request, a 4,096-token output budget and 64K context. The two 100-task sets have been used for candidate selection: these are development results, not untouched confirmation tests. The saved baseline is reused when checkpoint, tasks and settings match.
+
+## Retrain
 
 ```sh
 ./run.sh finetune
-# Other Flint checkpoints:
+# Other Flint checkpoints, trained against their own unchanged coefficients:
 ./run.sh finetune /path/to/flint.gguf --output adapters/my-flint-terse
 ./run.sh finetune owner/repository:filename.gguf --revision COMMIT
+# Require the original compression target before automatic deployment:
+./run.sh finetune --output adapters/strict --min-thinking-reduction 70
 ```
 
-The script finds the checkpoint in local `models/` or LM Studio folders, downloads it if missing, trains, exports, evaluates and loads passing candidates as **flint-terse**. `--model-dir PATH` adds a search directory. The current default training recipe is the experimental opening-token adapter; it has not passed the release checks.
+The default reproduces the balanced recipe: rank-8 query/value LoRA across 49 layers, 200 optimizer updates with four-example accumulation, learning rate 0.00002, answer KL weight 8 and exported strength 0.55. It uses the 410 reviewed pairs in `data/adaptive-sampled.jsonl` and `data/adaptive-native.jsonl`. MLX supplies differentiation; LM Studio's llama.cpp runtime runs the exported adapter.
 
-The default base is [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), **flint-int4-q4_1.gguf**, revision `9c47151036bc2c34331142dda04488bceab2bc9f`. SHA-256: `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`.
+The pipeline finds or downloads the base, trains, verifies and exports the separate adapter, evaluates it and loads passing results as `flint-terse`. Existing output folders are not overwritten. Accuracy may drop by at most two percentage points overall and per task family; reply completion and delimiter checks must also pass. **The default compression floor is 0% to permit the selected balanced result.** Set `--min-thinking-reduction 70` to enforce >70% reduction on both shared correct answers and ordinary completed replies. New training runs are not guaranteed to reproduce the saved scores.
 
-This is the publisher's GGUF counterpart of `RecursiveSI/flint-int4`, distinct from the Q4_K_M conversion. Its integer codes match the MLX export; some BF16 scales/offsets were rounded to FP16 by the publisher. Training uses the actual GGUF coefficients. MLX supplies differentiation; LM Studio's llama.cpp runtime handles deployment. The base is never merged or requantized. Supported inputs use Flint's architecture and Q4_1, Q4_K, Q6_K, Q8_0, F16 or F32 tensors.
+Explicit `--data`, `--steps`, `--layers`, `--rank` and `--adapter-scale` override the recipe. Other experimental methods remain available through `./run.sh finetune --help`. Supported inputs use Flint's architecture and Q4_1, Q4_K, Q6_K, Q8_0, F16 or F32 tensors.
 
-Training has been run on a 128 GB Mac. Deployment needs much less memory: LM Studio estimates 28.27 GiB at 64K context, 31.59 GiB at 128K and 38.23 GiB at 256K, with full GPU offload, one prediction slot and no MTP. These are load estimates, not measured peak memory or long-context quality results. Separate adapters range from 609 KB for the opening token to about 18.5 MB for attention plus opening.
+## Corpus
 
-## Training and corpus
+Supervised loss teaches short calculations, algorithms and necessary checks. Probability matching protects final replies, which have no shortening objective. The method is LoRA on a frozen quantized base, not a claim of a universally best fine-tuning method.
 
-Supervised loss teaches reviewed short notes. Probability matching preserves final replies; optional same-prefix retention also protects existing math/code behavior. Final replies have no shortening objective. Correctness checks and probability agreement are complementary: a likely short trace can still be wrong.
-
-- `--method opening` learns 2,048 values in the existing `<think>` embedding. The pinned base defaults to the packaged initializer in `data/opening-init`; `--from-scratch` skips it.
-- `--method attention --layers 49` trains rank-8 query/value LoRA. `--resume-adapter PATH` continues a compatible adapter at its saved scale; `--train-layers 8` can freeze its earlier layers.
-- Increasing `--rank` when resuming keeps the existing factors frozen and trains only the added columns. For example, rank 8 → 16 adds a separate rank-8 update while exporting one portable adapter.
-- `--same-prefix-teacher`, with attention resumption, preserves answer probabilities after the compact notes. In attention training, rows marked `preserve_only` protect the starting adapter's final-answer probabilities without supervising its thinking wording.
-- `--teacher-adapter PATH` keeps an answer-probability reference fixed, normally after the original `teacher_reasoning`. With `--same-prefix-teacher`, it follows compact notes and also supplies policy-retention targets. `--narration-penalty` discourages stock first words (`We`, `The`, `Okay`, `Hmm`, `I`) only in supervised thinking; it adds no inference-time filter or final-reply restriction.
-- `--entry-weight` emphasizes the first thinking token, `</think>`, and the first answer token. Each position is weighted once, including when thinking is empty. `--entry-only` instead supervises just the thinking entry; answer and code/math probability retention still apply.
-- `--retention-kl` controls probability retention separately from the prose answer objective. It matches final-answer probabilities, with extra emphasis on answer entry. `build-preferences --policy-retention` builds these rows from checked correct captures, keeping the model's actual notes as context for its replies.
-- `--attention-adapter PATH` instead freezes attention and learns only the opening-token adjustment alongside it.
-- `--preference-weight` adds DPO against checked wrong responses. `--compact-preference-weight` prefers reviewed short notes over native notes with identical final replies.
-- `--teacher-features PATH [PATH ...]` reuses matching cached probability features in corpus order. `--adapter-scale` adjusts the learned update. After rank expansion it scales only the added component, keeping the frozen factors unchanged; all factors remain FP32.
-
-`--steps` counts optimizer updates, each accumulating four examples. Validation selects the saved checkpoint. `--no-promote` keeps evaluation under `flint-terse-eval`.
-
-The initial attention corpus has 410 reviewed pairs: 189 math, 147 code, 26 OpenClaw and 48 prose. `data/direct-prose.jsonl` trains 139 simple writing/conversation examples with a one-token note (`—`) and 26 tool examples with short notes. Its 426 retention examples protect math, code, technical explanations and plans using the starting adapter’s probabilities. Reviewed final replies stay unchanged. All 212 code responses pass their tests; 62 also have checked incorrect alternatives for preference training. The 87 prose wording variants keep final replies unchanged. The original few examples were insufficient.
-
-`data/code-prose-paired.jsonl` adds 32 distinct conversational coding tasks, each in three phrasings. Variants share checked implementations, short algorithm notes and reviewed final replies, and stay in their parent's train/validation split. These are 96 examples, not 96 independent tasks.
-
-`data/code-prose-extra-prompts.jsonl` contains 180 further tasks from the checked training corpus, now requesting normal explanatory replies. Recreate it at a new path with `./run.sh build-corpus --code-prose OUTPUT`. Collect and review fresh responses before pairing short notes. `batch-capture` defaults to the same pinned GGUF and supports continuous batching for this collection.
-
-`data/final-paired.jsonl` is the final expanded corpus: 699 examples, including 320 checked code answers across 212 distinct tasks. It teaches actual algorithm notes for the formal code tasks and restores useful constraint notes for writing. The 76 new conversational pairs passed native code checks, a likelihood screen against the unchanged GGUF, and code checks after regenerating answers from their short notes. Supervised examples have equal weight; math and technical-prose retention remain separate.
+The final experimental corpus, `data/final-paired.jsonl`, contains 699 examples, including 320 checked code answers across 212 distinct tasks. It restores useful constraint notes for writing instead of teaching empty thoughts. Its 76 new conversational pairs passed native code checks, a likelihood screen against the exact GGUF, and code checks after regenerating answers from the short notes. This corpus did **not** produce the selected release.
 
 To extend the corpus:
 
-1. Collect several native responses per **training** prompt using `capture` or `batch-capture`. Keep evaluation prompts separate.
-2. Use `distill build/select/pair` to collect shorter candidates and pair them with unchanged verified final replies. Prefer short traces only when their answers pass checks.
-3. Alternatively, `prune --build` asks for redundant passages to remove. `prune --selections FILE --model GGUF` compares retained-token and answer likelihoods before accepting edits. Regenerate answers after the fixed notes to check them again.
-4. Review the notes and replies. Keep useful calculations and edge-case checks; remove narration and prompt repetition. Mark accepted rows `approved=true`.
+1. Collect native responses with `capture` or `batch-capture`; keep evaluation tasks separate.
+2. Use `rewrite`, or `prune --build` followed by `prune --selections`, to propose shorter notes and check answer likelihood. `distill build/select/pair` offers a demonstration-based alternative.
+3. Regenerate answers with `batch-capture --continue-thinking` and run their checks. This verifies supplied notes; it is not a free-generation benchmark.
+4. Review the notes and final replies, then mark accepted rows `approved=true`. Test success and probability agreement alone do not establish correctness.
 
-Rows contain `id`, `messages`, `split`, `assistant`, and a numeric, text, JSON, tool-call or Python-test check. Paired rows also retain `teacher_reasoning`. `build-preferences --shortest-correct` selects checked samples by thinking length for supervised training. `build-preferences` attaches checked mistakes; its `--answer-repair` mode pairs sampled student notes with verified final answers for `--answer-only` training.
+`data/code-prose-extra-prompts.jsonl` contains the 180 additional conversational prompts; recreate it at a new path with `./run.sh build-corpus --code-prose OUTPUT`. Corpus collection, editing and scoring accept `--model` and default to the same pinned GGUF.
 
-`build-corpus` imports [GSM8K](https://github.com/openai/grade-school-math) and Google's [MBPP](https://huggingface.co/datasets/google-research-datasets/mbpp) (CC BY 4.0; prompts adapted). Expanded prose prompts come from [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk). Raw captures require review before training. Collection, rewriting, pruning, pairing and probability scoring accept `--model` and default to the pinned GGUF. Every command accepts `--help`.
+Sources: [GSM8K](https://github.com/openai/grade-school-math), Google's [MBPP](https://huggingface.co/datasets/google-research-datasets/mbpp) (CC BY 4.0; prompts adapted), and [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk). [TokenSkip](https://arxiv.org/abs/2502.12067) informed trace pruning; optional preference training follows [DPO](https://arxiv.org/abs/2305.18290). The current recipe uses fixed training prefixes, not full online distillation or GRPO. Attention-sink handling and shortest-correct sampling borrow ideas from `../flint-terse2`.
 
-## Evaluation
-
-The two saved 100-task sets contain 120 math and 80 code tasks. Both have been used to compare candidates, so they are development evaluations, not untouched confirmation sets.
-
-`data/code-prose-eval.jsonl` adds six separate conversational coding tasks with executable checks. They are excluded from training; the unchanged base passes 6/6 using 6,271 thinking tokens. Their saved baseline can be reused alongside the existing evaluations.
-
-| Candidate | Math | Code | Total | Less thinking on shared correct answers |
-| --- | ---: | ---: | ---: | ---: |
-| Unchanged official GGUF | 99/120 | 73/80 | 172/200 | — |
-| Repaired opening token | 103/120 | 63/80 | 166/200 | 79.1% |
-| All-layer attention at 55% strength | 105/120 | 72/80 | 177/200 | 69.9% |
-
-The attention candidate remains the best balanced result, but still narrates ordinary requests. The latest style run (`gguf-code-varied`) passes the six conversational coding checks with 95.1% less thinking, yet scores 39/49 on the broader code evaluation versus the base's 45/49 on those same tasks. Evaluation stopped once it could no longer pass the accuracy gate; it is not a release candidate. The next step is checked short-note supervision across the 180 additional coding tasks, rather than more strength variations. These finite comparisons do not establish unchanged quality on other tasks.
-
-Evaluations use temperature 1, top-p .95, top-k 20, min-p 0, repetition penalty 1, seed 42 per request, a 4,096-token output budget and 64K context. Reuse the saved baseline rather than generating it again:
+## Check the scripts
 
 ```sh
-./run.sh finetune --evaluate-only --output adapters/CANDIDATE \
-  --baseline runs/flint-terse-base \
-  --eval data/release-eval.jsonl data/confirmation-eval.jsonl \
-         data/direct-eval.jsonl data/retention-eval.jsonl data/release-chat.jsonl \
-  --no-promote
+./run.sh test
 ```
 
-`--resume-eval` continues saved candidate captures. A matching `runs/flint-terse-base` baseline is reused automatically; the pipeline checks tasks, checkpoint and sampling settings. Automatic release checks allow at most two percentage points of accuracy loss overall **and within each task family**, require more than 70% less thinking on shared correct answers **and** completed ordinary replies, and reject completion regressions or leaked thinking tags. Inspect final replies too; the checks do not grade prose quality.
-
-OpenClaw replay checks tool calls without executing them:
-
-```sh
-./run.sh replay data/openclaw-episodes.jsonl --model flint-terse-eval \
-  --tokenizer models/flint-int4-gguf/flint-int4-q4_1.gguf \
-  --temperature 1 --seed 42 --max-tokens 4096 --output runs/candidate-episodes.jsonl
-```
-
-`openclaw sync` reads the authorized remote instructions and tool schemas; `openclaw condition` adds them to collection prompts. Reuse the same context for matched comparisons. Run `./run.sh test` for the Python checks.
-
-## Deploy a validated adapter
-
-The output folder contains `adapter.gguf`, `adapters.safetensors`, its configuration, a sampling preset and a Jinja override. Export verifies every adapter coefficient byte-for-byte. The override removes only the incompatible `| replace("\x00", "")` filter.
-
-Copy the folder to another machine and import the matching original GGUF into regular LM Studio:
-
-```sh
-./run.sh setup-lmstudio
-./run.sh load-lmstudio --adapter /path/to/adapter
-# Optional: --model MODEL_KEY --context 65536
-```
-
-The loaded identifier is **flint-terse**. Run the loader again after unloading or restarting LM Studio to reattach the adapter. Select its installed sampling preset for GUI chats; API requests should send the same sampling values explicitly. The preset adds no system prompt. `export-adapter` creates portable files without rewriting the base. The older `export` command merges/requantizes and is not this deployment path.
-
-## Research
-
-This is supervised compression with probability retention and optional [DPO](https://arxiv.org/abs/2305.18290), not a claim of a universally best method. [TokenSkip](https://arxiv.org/abs/2502.12067) informed trace pruning; [prompt tuning](https://arxiv.org/abs/2104.08691) informed the small embedding experiments. [On-policy distillation](https://thinkingmachines.ai/blog/on-policy-distillation/) motivates matching a teacher at the student's prefixes; the current recipe uses fixed training prefixes, not full online distillation or GRPO. The attention-sink implementation and shortest-correct sampling borrow ideas from `../flint-terse2`.
+Dependencies are pinned in `requirements.txt`. The tests cover exact GGUF coefficients and gradients, adapter export, probability retention, corpus handling and evaluation checks. Every command accepts `--help`.

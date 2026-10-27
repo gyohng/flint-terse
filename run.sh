@@ -81,6 +81,7 @@ case "${1:-help}" in
     ;;
   load-lmstudio)
     shift
+    [[ -d .tools/lms-sdk/node_modules/@lmstudio/sdk ]] || ./run.sh setup-lmstudio
     node load_lmstudio.mjs "$@"
     ;;
   deploy)
@@ -109,7 +110,7 @@ case "${1:-help}" in
 ./run.sh export-adapter # FP32 GGUF adapter + Jinja override; no base conversion
 ./run.sh setup-lmstudio
 ./run.sh load-lmstudio # Official INT4 GGUF + separate FP32 adapter
-# README.md contains the opening-only training recipe and attention alternatives.
+# Use --help for advanced training and corpus options.
 ./run.sh train-prompt --help
 ./run.sh capture data/direct-eval.jsonl --adapter adapters/opening-pruned --output runs/direct-check.jsonl
 ./run.sh batch-capture data/holdout.jsonl --independent-seeds --batch-size 8 --max-tokens 4096 --output runs/base.jsonl
