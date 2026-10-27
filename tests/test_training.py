@@ -14,7 +14,7 @@ from mlx_lm.tuner.utils import linear_to_lora_layers, load_adapters
 
 from corpus import chat_messages, check_answer, configure_adapter_tokenizer, parse_assistant, select_trace, split_thinking, trace_cache, trace_scores
 from export import write_hf
-from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
+from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, narration_loss, preference_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
 from train_prompt import adapt_prompt, prefix_cache, prompt_loss, main as prompt_main
@@ -40,6 +40,17 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_narration_penalty_changes_only_the_first_thinking_word(self):
+        logits = mx.zeros((1, 12, 32))
+        grad = mx.grad(lambda x: narration_loss(x, [3, 5]))(logits)
+        self.assertGreater(grad[0, 1, 3].item(), 0)
+        self.assertGreater(grad[0, 1, 5].item(), 0)
+        self.assertLess(grad[0, 1, 7].item(), 0)
+        self.assertEqual(mx.max(mx.abs(grad[:, :1])).item(), 0)
+        self.assertEqual(mx.max(mx.abs(grad[:, 2:])).item(), 0)
+        lowered = logits.at[:, 1, 3].add(-1).at[:, 1, 5].add(-1)
+        self.assertLess(narration_loss(lowered, [3, 5]).item(), narration_loss(logits, [3, 5]).item())
+
     def test_opening_training_keeps_attention_and_uses_same_prefix_retention(self):
         model = tiny_flint()
         for _, module in model.named_modules():
@@ -228,16 +239,17 @@ class TrainingTests(unittest.TestCase):
                 {'id': 'train', 'split': 'train'}, {'id': 'valid', 'split': 'valid'},
                 {'id': 'retain', 'split': 'train', 'preserve_only': True}]))
             args = SimpleNamespace(model='tiny', teacher_features=[str(features)], paired=[corpus],
-                resume='starting', same_prefix_teacher=True, max_tokens=32, iters=2, accumulate=1,
+                resume='later-checkpoint', teacher_adapter='starting', same_prefix_teacher=True, max_tokens=32, iters=2, accumulate=1,
                 seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
-                opening_only=False, answer_only=False, preference_weight=0,
+                opening_only=False, answer_only=False, preference_weight=0, narration_penalty=1,
                 compact_preference_weight=0, preference_beta=.1, output=folder)
-            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
+            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7,
+                encode=lambda word, **kw: [{'We': 3, 'The': 5, 'Okay': 8, 'Hmm': 9, 'I': 10}[word]])
             with patch('train.training_tokens', return_value=(ids, offset)), \
                  patch('train.grad_checkpoint'), patch('mlx_lm.models.flint.scaled_dot_product_attention', training_attention):
                 train_paired(model, tokenizer, args)
                 self.assertGreater(completion_logp(model, ids, offset).item(), initial)
-                args.resume = 'wrong-teacher'
+                args.teacher_adapter = 'wrong-teacher'
                 with self.assertRaisesRegex(ValueError, 'starting attention adapter'):
                     train_paired(model, tokenizer, args)
 

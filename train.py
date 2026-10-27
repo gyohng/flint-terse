@@ -203,6 +203,13 @@ def preference_loss(chosen, rejected, reference_ratio, beta):
     return mx.logaddexp(0, -beta * (chosen - rejected - reference_ratio))
 
 
+def narration_loss(logits, discouraged):
+    # Only the first word after <think>; later notes and final replies stay free.
+    entry = logits[:, 1]
+    allowed = ~(mx.arange(entry.shape[-1])[:, None] == mx.array(discouraged)[None, :]).any(axis=-1)
+    return (mx.logsumexp(entry, axis=-1) - mx.logsumexp(mx.where(allowed, entry, -mx.inf), axis=-1)).mean()
+
+
 def train_paired(model, tokenizer, args, frozen_weights=None):
     trainable = [name for name, _ in tree_flatten(model.trainable_parameters())]
     if not trainable or any(not name.startswith("model.layers.") for name in trainable):
@@ -213,7 +220,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
     same_prefix = getattr(args, 'same_prefix_teacher', False)
-    if same_prefix and any(meta.get('adapter') != args.resume for _, meta in parts):
+    teacher_adapter = getattr(args, 'teacher_adapter', None) or getattr(args, 'resume', None)
+    if same_prefix and any(meta.get('adapter') != teacher_adapter for _, meta in parts):
         raise ValueError('Same-prefix features must use the starting attention adapter')
     teacher = {k: mx.concatenate([part[k] for part, _ in parts]) for k in ("hidden", "targets")}
     del parts
@@ -221,6 +229,14 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     preferences = 0
     model.train()
     close = tokenizer.convert_tokens_to_ids("</think>")
+    narration_penalty = getattr(args, 'narration_penalty', 0)
+    discouraged = []
+    if narration_penalty:
+        for word in ('We', 'The', 'Okay', 'Hmm', 'I'):
+            tokens = tokenizer.encode(word, add_special_tokens=False)
+            if len(tokens) != 1:
+                raise ValueError(f'Expected one token for narration start {word!r}')
+            discouraged.extend(tokens)
     for row in (r for path in args.paired for r in read_rows(path)):
         if row.get("answer_only") and not args.answer_only:
             raise ValueError(f"{row['id']}: sampled notes require --answer-only")
@@ -292,6 +308,8 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
         targets = mx.array([ids[offset:]])
         result = reasoning_loss(logits, targets, closing, reference,
                                 args.kl, args.start_weight, args.answer_weight, args.opening_only, args.answer_only)
+        if narration_penalty and ids[offset + 1] not in discouraged:
+            result += narration_penalty * narration_loss(logits, discouraged)
         chosen_logp = -nn.losses.cross_entropy(logits, targets, reduction="sum") if preference else None
         for rejected_ids, rejected_cached, reference_ratio, weight in preference:
             rejected_logp = completion_logp(model, rejected_ids, offset, rejected_cached, first_layer)
@@ -347,6 +365,9 @@ def main(argv=None, loaded=None):
     p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
     p.add_argument('--same-prefix-teacher', action='store_true',
                    help='Use the starting adapter at compact prefixes for answer and policy retention')
+    p.add_argument('--teacher-adapter', help='Keep this fixed probability reference while resuming another adapter')
+    p.add_argument('--narration-penalty', type=float, default=0,
+                   help='Penalize We/The/Okay/Hmm/I only at the start of supervised thinking')
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies without supervising sampled notes or the closing boundary")
@@ -374,6 +395,10 @@ def main(argv=None, loaded=None):
         p.error("--iters must be positive and divisible by --accumulate")
     if args.same_prefix_teacher and (not args.resume or not args.paired or args.compact_preference_weight):
         p.error('--same-prefix-teacher requires paired --resume without compact preferences')
+    if args.teacher_adapter and not args.same_prefix_teacher:
+        p.error('--teacher-adapter requires --same-prefix-teacher')
+    if args.narration_penalty < 0 or (args.narration_penalty and (not args.paired or args.answer_only)):
+        p.error('--narration-penalty requires paired reasoning supervision and a nonnegative weight')
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):

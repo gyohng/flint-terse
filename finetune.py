@@ -84,6 +84,9 @@ def main(argv=None, loaded=None):
     p.add_argument('--attention-adapter', help='Train the opening token alongside this frozen attention adapter')
     p.add_argument('--same-prefix-teacher', action='store_true',
                    help='When resuming attention, retain probabilities at the compact prefixes')
+    p.add_argument('--teacher-adapter', help='Fixed reference for same-prefix probability retention')
+    p.add_argument('--narration-penalty', type=float, default=0,
+                   help='Attention training: discourage stock narration at the start of supervised thinking')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
@@ -100,6 +103,10 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.same_prefix_teacher and (not args.resume_adapter or args.compact_preference_weight):
         p.error('--same-prefix-teacher requires --resume-adapter without compact preferences')
+    if args.teacher_adapter and not args.same_prefix_teacher:
+        p.error('--teacher-adapter requires --same-prefix-teacher')
+    if args.narration_penalty < 0 or (args.narration_penalty and (args.method != 'attention' or args.answer_only)):
+        p.error('--narration-penalty requires attention reasoning supervision and a nonnegative weight')
     if args.attention_adapter and (args.method != 'opening' or args.initial_adapter or args.resume_adapter):
         p.error('--attention-adapter requires --method opening without another initializer')
     if args.resume_adapter and args.method != 'attention':
@@ -166,7 +173,7 @@ def main(argv=None, loaded=None):
         import mlx.core as mx
         if loaded is None:
             initial = args.attention_adapter or args.resume_adapter
-            if initial:
+            for initial in filter(None, (initial, args.teacher_adapter)):
                 previous = json.loads((Path(initial) / 'adapter_config.json').read_text())
                 if previous['base_model']['sha256'] != source['sha256']:
                     p.error('The attention adapter must use this exact GGUF')
@@ -176,8 +183,8 @@ def main(argv=None, loaded=None):
             if not args.teacher_features:
                 if args.same_prefix_teacher:
                     from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
-                    load_adapters(loaded[0], args.resume_adapter)
-                teacher_adapter = args.resume_adapter if args.same_prefix_teacher else args.attention_adapter
+                    load_adapters(loaded[0], args.teacher_adapter or args.resume_adapter)
+                teacher_adapter = (args.teacher_adapter or args.resume_adapter) if args.same_prefix_teacher else args.attention_adapter
                 cache_features.main([*args.data, '--model', str(model),
                     *(['--adapter', teacher_adapter] if teacher_adapter else ['--original-reasoning']),
                     '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
@@ -189,6 +196,8 @@ def main(argv=None, loaded=None):
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
                     *(['--resume', args.resume_adapter] if args.resume_adapter else []),
                     *(['--same-prefix-teacher'] if args.same_prefix_teacher else []),
+                    *(['--teacher-adapter', args.teacher_adapter] if args.teacher_adapter else []),
+                    '--narration-penalty', str(args.narration_penalty),
                     *(['--train-layers', str(args.train_layers)] if args.train_layers is not None else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--preference-weight', str(args.preference_weight),
