@@ -17,7 +17,7 @@ from export import write_hf
 from train import completion_logp, freeze_thinking_embedding, frozen_hidden, loss_masks, main as train_main, make_loss, preference_loss, reasoning_loss, train_paired, training_attention
 from batch_capture import request_sampler
 from train_head import delta_norm, loss as head_loss
-from train_prompt import adapt_prompt, prefix_cache, prompt_loss
+from train_prompt import adapt_prompt, prefix_cache, prompt_loss, main as prompt_main
 
 
 def tiny_flint(targets=None, rank=2):
@@ -40,6 +40,45 @@ def tiny_flint(targets=None, rank=2):
 
 
 class TrainingTests(unittest.TestCase):
+    def test_opening_training_keeps_attention_and_uses_same_prefix_retention(self):
+        model = tiny_flint()
+        for _, module in model.named_modules():
+            if hasattr(module, 'lora_b'):
+                module.lora_b = mx.random.normal(module.lora_b.shape) * .01
+        weights = dict(tree_flatten(model.trainable_parameters()))
+        ids, offset = [2, 3, 5, 6, 42, 7, 11, 1], 3
+        hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
+        mx.eval(weights, hidden)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            source, output = folder / 'source', folder / 'output'
+            source.mkdir()
+            config = {'model': 'tiny', 'num_layers': 2, 'base_model': {'sha256': 'tiny'},
+                      'lora_parameters': {'rank': 2, 'scale': 2., 'dropout': 0.,
+                                          'keys': ['self_attn.q_proj', 'self_attn.v_proj']}}
+            (source / 'adapter_config.json').write_text(json.dumps(config))
+            features, corpus = folder / 'features.safetensors', folder / 'corpus.jsonl'
+            mx.save_safetensors(str(features), {'hidden': mx.concatenate([hidden] * 3),
+                'targets': mx.array(ids[offset:] * 3)}, metadata={'model': 'tiny', 'adapter': str(source)})
+            corpus.write_text('\n'.join(json.dumps(row) for row in [
+                {'id': 'style', 'split': 'train'}, {'id': 'valid', 'split': 'valid'},
+                {'id': 'retention', 'split': 'train', 'preserve_only': True}]))
+            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda t:
+                {'<think>': 6, '</think>': 7, '<|assistant|>': 5, '<|user|>': 2}[t])
+            with patch('train_prompt.training_tokens', return_value=(ids, offset)):
+                prompt_main([str(corpus), '--model', 'tiny', '--teacher-features', str(features),
+                    '--attention-adapter', str(source), '--think-opening', '--steps', '1',
+                    '--accumulate', '2', '--output', str(output)], loaded=(model, tokenizer))
+            saved = mx.load(str(output / 'adapters.safetensors'))
+            for key in weights:
+                self.assertTrue(bool((saved[key] == weights[key]).all()), key)
+            embedding = saved['model.embed_tokens.lora_b']
+            self.assertTrue(bool((embedding[0] != 0).any()))
+            self.assertTrue(bool((embedding[1] == 0).all()))
+            retained = json.loads((output / 'adapter_config.json').read_text())
+            self.assertEqual(retained['lora_parameters']['scale'], 2.)
+            self.assertEqual(retained['num_layers'], 2)
+
     def test_frozen_layer_cache_preserves_likelihood_and_gradients(self):
         mx.random.seed(19)
         model = tiny_flint()

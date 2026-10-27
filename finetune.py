@@ -80,6 +80,7 @@ def main(argv=None, loaded=None):
     start.add_argument('--initial-adapter', help='Initialize from a compatible native thinking-token adapter')
     start.add_argument('--resume-adapter', help='Continue an attention adapter at its saved scale')
     start.add_argument('--from-scratch', action='store_true', help='Skip the packaged opening-token initializer')
+    p.add_argument('--attention-adapter', help='Train the opening token alongside this frozen attention adapter')
     p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
     p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
@@ -94,6 +95,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
+    if args.attention_adapter and (args.method != 'opening' or args.initial_adapter or args.resume_adapter):
+        p.error('--attention-adapter requires --method opening without another initializer')
     if args.resume_adapter and args.method != 'attention':
         p.error('--resume-adapter requires --method attention')
     if args.train_layers is not None and not args.resume_adapter:
@@ -128,7 +131,7 @@ def main(argv=None, loaded=None):
     run('lms', 'server', 'start')
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
     packaged = (not args.evaluate_only and args.method == 'opening' and not args.from_scratch
-                and args.initial_adapter is None and source['sha256'] == DEFAULT_SHA256)
+                and args.initial_adapter is None and not args.attention_adapter and source['sha256'] == DEFAULT_SHA256)
     if packaged:
         args.initial_adapter = 'data/opening-init'
     if args.learning_rate is None:
@@ -157,10 +160,15 @@ def main(argv=None, loaded=None):
         from gguf_model import load_model
         import mlx.core as mx
         if loaded is None:
-            loaded = load_model(str(model))
+            if args.attention_adapter:
+                previous = json.loads((Path(args.attention_adapter) / 'adapter_config.json').read_text())
+                if previous['base_model']['sha256'] != source['sha256']:
+                    p.error('The attention adapter must use this exact GGUF')
+            loaded = load_model(str(model), adapter_path=args.attention_adapter)
         with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
             features = Path(tmp) / 'features.safetensors'
-            cache_features.main([*args.data, '--model', str(model), '--original-reasoning',
+            cache_features.main([*args.data, '--model', str(model),
+                *(['--adapter', args.attention_adapter] if args.attention_adapter else ['--original-reasoning']),
                 '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
             if args.method == 'attention':
                 import train
@@ -182,6 +190,7 @@ def main(argv=None, loaded=None):
                     '--steps', str(args.steps), '--max-change', str(args.max_change),
                     '--learning-rate', str(args.learning_rate),
                     '--max-tokens', '16384', '--output', str(args.output),
+                    *(['--attention-adapter', args.attention_adapter] if args.attention_adapter else []),
                     *(['--initial-adapter', args.initial_adapter] if args.initial_adapter else [])], loaded=loaded)
         del loaded
         gc.collect()

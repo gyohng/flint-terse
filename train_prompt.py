@@ -14,18 +14,21 @@ import mlx.optimizers as optim
 from gguf_model import load_model as load
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.tuner.lora import LoRAEmbedding
+from mlx.utils import tree_flatten
 
 from corpus import BASE, read_rows, training_tokens
 from train import reasoning_loss, training_attention
 
 
-def adapt_prompt(model, token_ids, initial_ids):
+def adapt_prompt(model, token_ids, initial_ids, rank=None, scale=1):
     model.freeze()
     base = model.model.embed_tokens
     initial = base(mx.array(initial_ids)).astype(mx.float32)
-    embedding = LoRAEmbedding.from_base(base, r=len(token_ids), scale=1, dropout=0)
-    embedding.lora_a = (mx.arange(embedding.lora_a.shape[0])[:, None] == mx.array(token_ids)[None, :]).astype(mx.float32)
-    embedding.lora_b = initial - base(mx.array(token_ids)).astype(mx.float32)
+    padding = (rank or len(token_ids)) - len(token_ids)
+    embedding = LoRAEmbedding.from_base(base, r=len(token_ids) + padding, scale=scale, dropout=0)
+    selector = (mx.arange(embedding.lora_a.shape[0])[:, None] == mx.array(token_ids)[None, :]).astype(mx.float32)
+    embedding.lora_a = mx.pad(selector, [(0, 0), (0, padding)])
+    embedding.lora_b = mx.pad((initial - base(mx.array(token_ids)).astype(mx.float32)) / scale, [(0, padding), (0, 0)])
     embedding.freeze(recurse=False, keys="lora_a")
     model.model.embed_tokens = embedding
     return embedding, initial
@@ -39,9 +42,12 @@ def prefix_cache(model, prompt, cache=None):
     return cache
 
 
-def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1, answer_weight=0):
+def prompt_loss(model, inputs, targets, cache, prefix_length, closing, reference, answer_kl, start_weight=1, answer_weight=0, preserve=False):
     hidden = model.model(inputs, cache=copy.deepcopy(cache))[:, prefix_length:]
     logits = model.lm_head(hidden).astype(mx.float32)
+    if preserve:
+        divergence = (mx.exp(reference) * (reference - nn.log_softmax(logits, axis=-1))).sum(axis=-1)
+        return answer_kl * .5 * (divergence.mean() + divergence[:, :8].mean())
     return reasoning_loss(logits, targets, closing, reference, answer_kl, start_weight, answer_weight)
 
 
@@ -54,6 +60,7 @@ def main(argv=None, loaded=None):
     start = p.add_mutually_exclusive_group()
     start.add_argument("--resume", help="Start from a learned prefix on the same base, with a fresh optimizer")
     start.add_argument("--initial-adapter", help="Initialize native thinking-token weights from another checkpoint")
+    p.add_argument("--attention-adapter", help="Freeze this attention adapter; teacher features must use its compact prefixes")
     p.add_argument("--checkpoint", choices=("best", "last"), default="best", help="Select by validation loss or a fixed update count")
     p.add_argument("--steps", type=int, default=100)
     p.add_argument("--accumulate", type=int, default=4)
@@ -75,6 +82,8 @@ def main(argv=None, loaded=None):
     args.think_tokens = args.think_tokens or args.think_opening
     if args.initial_adapter and not args.think_tokens:
         p.error('--initial-adapter requires native thinking-token training')
+    if args.attention_adapter and (not args.think_opening or args.resume or args.initial_adapter):
+        p.error('--attention-adapter requires --think-opening from its unchanged native embedding')
     output = Path(args.output)
     if output.exists():
         p.error(f"{output} exists; choose a new output")
@@ -85,10 +94,18 @@ def main(argv=None, loaded=None):
     features = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in features):
         p.error("Teacher features must come from the same frozen model")
+    if args.attention_adapter and any(meta.get('adapter') != args.attention_adapter for _, meta in features):
+        p.error('Teacher features must use the frozen attention adapter')
     hidden = mx.concatenate([f["hidden"] for f, _ in features])
     cached_targets = mx.concatenate([f["targets"] for f, _ in features])
     del features
-    model, tokenizer = loaded if loaded is not None else load(args.model)
+    model, tokenizer = loaded if loaded is not None else load(args.model, adapter_path=args.attention_adapter)
+    attention = json.loads((Path(args.attention_adapter) / 'adapter_config.json').read_text()) if args.attention_adapter else None
+    frozen_weights = {name: value for name, value in tree_flatten(model.parameters())
+                      if name.endswith(('.lora_a', '.lora_b'))} if attention else {}
+    if attention and (attention['lora_parameters']['keys'] != ['self_attn.q_proj', 'self_attn.v_proj']
+                      or not frozen_weights):
+        p.error('Expected a loaded q/v attention adapter with a frozen output head')
     if model.model_type != "flint" or model.args.tie_word_embeddings:
         p.error("This recipe requires Flint's separate input embedding and output head")
     if args.think_tokens:
@@ -124,10 +141,11 @@ def main(argv=None, loaded=None):
         ([tokenizer.convert_tokens_to_ids(f"<|{args.prompt_role}|>")] if args.prompt_role != "user" else []) + token_ids)
     records, cursor = {"train": [], "valid": []}, 0
     for row in (r for path in args.input for r in read_rows(path)):
-        if row.get("answer_only") or row.get("preserve_only"):
-            raise ValueError(f"{row['id']}: answer repair and policy retention require attention training")
+        preserve = row.get('preserve_only', False)
+        if row.get("answer_only") or (preserve and not attention):
+            raise ValueError(f"{row['id']}: policy retention requires --attention-adapter; answer repair is unsupported")
         ids, offset = training_tokens(row, tokenizer)
-        original = {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
+        original = row if attention else {**row, "assistant": {**row["assistant"], "reasoning_content": row["teacher_reasoning"]}}
         teacher_ids, teacher_offset = training_tokens(original, tokenizer)
         completion, teacher = ids[offset:], teacher_ids[teacher_offset:]
         closing, teacher_close = completion.index(close), teacher.index(close)
@@ -140,15 +158,16 @@ def main(argv=None, loaded=None):
             p.error(f"{row['id']}: final reply changed")
         if cached_targets[cursor:cursor + len(teacher)].tolist() != teacher:
             p.error(f"{row['id']}: teacher feature order/token mismatch")
-        answer_hidden = hidden[cursor + teacher_close + 1:cursor + len(teacher)]
+        answer_hidden = hidden[cursor if preserve else cursor + teacher_close + 1:cursor + len(teacher)]
         insertion = ids.index(user) if args.prompt_role == "system" else offset - 1
         records[row["split"]].append((ids[:insertion], ids[insertion:offset], completion, closing,
-                                      answer_hidden, row.get("loss_weight", 1)))
+                                      answer_hidden, preserve, row.get("loss_weight", 1)))
         cursor += len(teacher)
     if cursor != len(cached_targets) or not all(records.values()):
         p.error("Need aligned teacher features and nonempty train/validation splits")
     mx.random.seed(args.seed)
-    embedding, initial = adapt_prompt(model, token_ids, initial_ids)
+    lora = attention['lora_parameters'] if attention else {'rank': len(token_ids), 'scale': 1}
+    embedding, initial = adapt_prompt(model, token_ids, initial_ids, lora['rank'], lora['scale'])
     if resumed is not None:
         expected_weights = {'model.embed_tokens.lora_a': embedding.lora_a,
                             'model.embed_tokens.lora_b': embedding.lora_b}
@@ -161,7 +180,7 @@ def main(argv=None, loaded=None):
             p.error("Resumed adapter modifies unexpected embedding rows")
         embedding.lora_b = resumed["model.embed_tokens.lora_b"]
     initial_b = embedding.lora_b
-    radius = args.max_change * mx.linalg.norm(initial, axis=-1, keepdims=True)
+    radius = args.max_change * mx.linalg.norm(initial, axis=-1, keepdims=True) / embedding.scale
     model.train()
     from mlx_lm.models import flint
     flint.scaled_dot_product_attention = training_attention
@@ -176,7 +195,7 @@ def main(argv=None, loaded=None):
                                                 k=args.steps * args.accumulate)
 
     def example(row, training):
-        prompt, suffix, completion, closing, answer_hidden, _ = row
+        prompt, suffix, completion, closing, answer_hidden, preserve, _ = row
         if shared_cache is not None and prompt[:len(shared_prefix)] == shared_prefix:
             cache = prefix_cache(model, prompt[len(shared_prefix):], shared_cache)
         else:
@@ -186,7 +205,7 @@ def main(argv=None, loaded=None):
         mx.eval(reference)
         fn = grad_fn if training else prompt_loss
         result = fn(model, inputs, mx.array([completion]), cache, len(control_ids) + len(suffix) - 1,
-                    closing, reference, args.answer_kl, args.start_weight, args.answer_weight)
+                    closing, reference, args.answer_kl, args.start_weight, args.answer_weight, preserve)
         mx.eval(result)
         return result
 
@@ -215,8 +234,12 @@ def main(argv=None, loaded=None):
     config = {**vars(args), "fine_tune_type": "lora", "num_layers": 1,
               "prompt_tokens": [] if args.think_tokens else token_names,
               "lora_parameters": {"rank": len(token_ids), "scale": 1.0, "dropout": 0.0, "keys": ["model.embed_tokens"]}}
+    if attention:
+        config.update(num_layers=attention['num_layers'], base_model=attention['base_model'],
+                      lora_parameters={**lora, 'keys': [*lora['keys'], 'model.embed_tokens']})
     (output / "adapter_config.json").write_text(json.dumps(config, indent=2) + "\n")
     mx.save_safetensors(str(output / "adapters.safetensors"), {
+        **frozen_weights,
         "model.embed_tokens.lora_a": embedding.lora_a,
         "model.embed_tokens.lora_b": initial_b + args.prompt_strength * (best_b - initial_b),
     })
