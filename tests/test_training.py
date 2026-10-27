@@ -139,6 +139,7 @@ class TrainingTests(unittest.TestCase):
             mx.save_safetensors(str(features), {"hidden": hidden, "targets": mx.array(original_ids[offset:])}, metadata={"model": "tiny"})
             rows = [{"id": split, "split": split, "teacher_reasoning": "native", "assistant": {}} for split in ("train", "valid")]
             rows[0].update(rejected_assistant={"content": "wrong"}, rejected_ending="<|user|>")
+            rows.append({"id": "retention", "split": "train", "preserve_only": True, "assistant": {}})
             corpus.write_text("\n".join(json.dumps(r) for r in rows))
             args = SimpleNamespace(model="tiny", teacher_features=[str(features)] * 2, paired=[corpus],
                 max_tokens=32, iters=2, accumulate=1, seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,

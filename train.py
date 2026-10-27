@@ -251,7 +251,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
                 or rejected_ids[:offset] != ids[:offset]):
                 raise ValueError(f"{row['id']}: invalid rejected response or mismatched prompt")
             rejected_responses.append((rejected_ids, args.preference_weight))
-        if args.compact_preference_weight and len(ids) < len(original_ids):
+        if args.compact_preference_weight and not preserve and len(ids) < len(original_ids):
             if len(original_ids) > args.max_tokens:
                 raise ValueError(f"{row['id']}: original reasoning exceeds --max-tokens")
             rejected_responses.append((original_ids, args.compact_preference_weight))

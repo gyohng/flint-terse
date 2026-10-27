@@ -70,6 +70,8 @@ def main(argv=None, loaded=None):
     p.add_argument('--train-layers', type=int, help='When resuming an attention adapter, update only the last N layers')
     p.add_argument('--preference-weight', type=float, default=0,
                    help='Attention training: prefer checked correct responses over labeled mistakes')
+    p.add_argument('--compact-preference-weight', type=float, default=0,
+                   help='Attention training: prefer reviewed short notes over original notes with the same final reply')
     p.add_argument('--answer-only', action='store_true',
                    help='Attention training: repair final answers without imitating the sampled reasoning')
     p.add_argument('--adapter-scale', type=float,
@@ -98,9 +100,10 @@ def main(argv=None, loaded=None):
         p.error('--train-layers requires --resume-adapter')
     if args.layers is None:
         args.layers = json.loads((Path(args.resume_adapter) / 'adapter_config.json').read_text())['num_layers'] if args.resume_adapter else 8
-    if args.preference_weight < 0 or (args.preference_weight and args.method != 'attention'):
-        p.error('--preference-weight must be nonnegative and requires --method attention')
-    if args.answer_only and (args.method != 'attention' or args.preference_weight):
+    if min(args.preference_weight, args.compact_preference_weight) < 0 or (
+        (args.preference_weight or args.compact_preference_weight) and args.method != 'attention'):
+        p.error('Preference weights must be nonnegative and require --method attention')
+    if args.answer_only and (args.method != 'attention' or args.preference_weight or args.compact_preference_weight):
         p.error('--answer-only requires --method attention without preferences')
     if not args.evaluate_only and args.method == 'attention' and args.max_change not in (None, 1):
         p.error('--max-change applies only to opening training')
@@ -167,6 +170,7 @@ def main(argv=None, loaded=None):
                     *(['--train-layers', str(args.train_layers)] if args.train_layers is not None else []),
                     '--kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--preference-weight', str(args.preference_weight),
+                    '--compact-preference-weight', str(args.compact_preference_weight),
                     *(['--answer-only'] if args.answer_only else []),
                     '--layers', str(args.layers), '--rank', '8', '--iters', str(args.steps * 4),
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
@@ -246,6 +250,13 @@ def main(argv=None, loaded=None):
         raise SystemExit('Ordinary-reply completion regression detected. Inspect the saved answers.')
     if not paired or after * 100 >= before * 30:
         raise SystemExit('Thinking reduction must exceed 70%. This is not a terse release; inspect the traces.')
+    ordinary = [(b, t) for b, t in prose if b['complete'] and t['complete']]
+    before = sum(b['reasoning_tokens'] for b, _ in ordinary)
+    after = sum(t['reasoning_tokens'] for _, t in ordinary)
+    if ordinary:
+        print(f'Ordinary completed replies: thinking {before} -> {after} tokens.', flush=True)
+        if before and after * 100 >= before * 30:
+            raise SystemExit('Thinking reduction on ordinary replies must also exceed 70%; inspect the traces.')
     if args.no_promote:
         print(f'Automatic checks passed for {args.output}; candidate remains flint-terse-eval for further checks.')
         return
