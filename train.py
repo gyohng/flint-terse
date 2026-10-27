@@ -270,7 +270,7 @@ def train_paired(model, tokenizer, args, frozen_weights=None, frozen_columns=Non
             hidden = teacher['hidden'][cursor if preserve else cursor + closing + 1:cursor + len(completion)]
             cursor += len(completion)
         elif preserve:
-            # Preserve the starting terse policy at these same prefixes, including its thinking.
+            # Cache the original context; retention loss uses only the final reply.
             hidden = mx.stop_gradient(completion_hidden(model, ids, offset, cached, first_layer)[0])
             mx.eval(hidden)
         else:

@@ -88,13 +88,13 @@ def main(argv=None, loaded=None):
     p.add_argument('model', nargs='?', default=DEFAULT_MODEL, help='Local GGUF or owner/repository:filename.gguf')
     p.add_argument('--revision', help='Hugging Face revision; the default checkpoint is pinned')
     p.add_argument('--model-dir', action='append', default=[], help='Additional local model search directory')
-    p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
+    p.add_argument('--data', nargs='+', help='Reviewed corpus; defaults to the balanced attention recipe')
     p.add_argument('--teacher-features', nargs='+', type=Path, help='Reuse cached probability features in corpus order')
     p.add_argument('--output', type=Path, default=Path('adapters/flint-terse'))
-    p.add_argument('--steps', type=int, default=100)
-    p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
+    p.add_argument('--steps', type=int, help='Optimizer updates; defaults to 200 for attention, 100 otherwise')
+    p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='attention',
                    help='Adapt the opening token, both thinking boundaries, or attention projections')
-    p.add_argument('--layers', type=int, help='Attention adapter depth; defaults to 8, or the resumed adapter depth')
+    p.add_argument('--layers', type=int, help='Attention adapter depth; defaults to 49, or the resumed adapter depth')
     p.add_argument('--rank', type=int, help='LoRA rank; increasing a resumed rank freezes its existing factors and trains added columns')
     p.add_argument('--train-layers', type=int, help='When resuming an attention adapter, update only the last N layers')
     p.add_argument('--preference-weight', type=float, default=0,
@@ -120,22 +120,28 @@ def main(argv=None, loaded=None):
     p.add_argument('--entry-weight', type=float, default=0,
                    help='Attention training: emphasize thinking entry, its closing marker, and answer entry')
     p.add_argument('--retention-kl', type=float, default=8, help='KL weight for math/code policy retention')
-    p.add_argument('--learning-rate', type=float, help='Defaults to .0001 for the packaged recipe, .001 from scratch, .000005 for attention')
+    p.add_argument('--learning-rate', type=float, help='Defaults to .00002 for attention, .0001 for packaged opening, .001 for opening from scratch')
     p.add_argument('--max-change', type=float,
                    help='Limit the embedding update norm relative to the original embedding')
     p.add_argument('--max-accuracy-drop', type=float, default=2,
                    help='Allowed accuracy drop overall and per task family, in percentage points (default: 2)')
-    p.add_argument('--min-thinking-reduction', type=float, default=70,
-                   help='Required thinking reduction on shared correct and ordinary completed replies, percent (default: 70)')
+    p.add_argument('--min-thinking-reduction', type=float, default=0,
+                   help='Required thinking reduction, percent; default 0 accepts the best balanced recipe; use 70 for the original target')
     p.add_argument('--evaluate-only', action='store_true', help='Evaluate and load an already trained output directory')
     p.add_argument('--resume-eval', action='store_true', help='Continue an interrupted evaluation without repeating saved tasks')
     p.add_argument('--no-promote', action='store_true', help='Leave the candidate as flint-terse-eval for further checks')
     p.add_argument('--baseline', type=Path, help='Reuse saved baseline prefix; matching runs/flint-terse-base is reused automatically')
-    p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/confirmation-eval.jsonl', 'data/direct-eval.jsonl',
+    p.add_argument('--eval', nargs='+', default=['data/release-eval.jsonl', 'data/confirmation-eval.jsonl', 'data/direct-eval.jsonl', 'data/code-prose-eval.jsonl',
                                                'data/retention-eval.jsonl', 'data/release-chat.jsonl'])
     p.add_argument('--api', default='http://localhost:1234/v1')
     p.add_argument('--context', type=int, default=65536)
     args = p.parse_args(argv)
+    balanced = args.data is None and args.method == 'attention' and not (args.resume_adapter or args.initial_adapter)
+    if args.data is None:
+        args.data = (['data/adaptive-sampled.jsonl', 'data/adaptive-native.jsonl'] if args.method == 'attention'
+                     else ['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
+    if args.steps is None:
+        args.steps = 200 if args.method == 'attention' else 100
     if args.same_prefix_teacher and (not args.resume_adapter or args.compact_preference_weight):
         p.error('--same-prefix-teacher requires --resume-adapter without compact preferences')
     if args.teacher_adapter and not args.resume_adapter:
@@ -158,7 +164,7 @@ def main(argv=None, loaded=None):
         p.error('--rank requires attention training and a positive value')
     resumed = json.loads((Path(args.resume_adapter) / 'adapter_config.json').read_text()) if args.resume_adapter else None
     if args.layers is None:
-        args.layers = resumed['num_layers'] if resumed else 8
+        args.layers = resumed['num_layers'] if resumed else 49
     if args.rank is None:
         args.rank = resumed['lora_parameters']['rank'] if resumed else 8
     if min(args.preference_weight, args.compact_preference_weight) < 0 or (
@@ -191,11 +197,11 @@ def main(argv=None, loaded=None):
     if packaged:
         args.initial_adapter = 'data/opening-init'
     if args.learning_rate is None:
-        args.learning_rate = .0001 if packaged else .000005 if args.method == 'attention' else .001
+        args.learning_rate = .0001 if packaged else .00002 if args.method == 'attention' else .001
     if args.max_change is None:
         args.max_change = .1 if packaged else 1
     if args.adapter_scale is None:
-        args.adapter_scale = .9 if packaged else 1
+        args.adapter_scale = .55 if balanced else .9 if packaged else 1
     results = {}
     prefix = args.baseline or Path('runs/flint-terse-base')
     try:
