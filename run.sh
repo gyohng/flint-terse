@@ -81,6 +81,10 @@ PY
     shift
     .venv/bin/python export_adapter.py "$@"
     ;;
+  compose-adapters)
+    shift
+    .venv/bin/python compose.py "$@"
+    ;;
   load-lmstudio)
     shift
     node load_lmstudio.mjs "$@"
