@@ -57,6 +57,8 @@ def main(argv=None):
     assert all(exported[name].tobytes() == value.tobytes() for name, value in expected.items())
     override = args.adapter / "chat_template.jinja"
     override.write_text(template.replace(r' | replace("\x00", "")', ""))
+    (args.adapter / 'sampling.preset.json').write_text(
+        Path(__file__).with_name('sampling.preset.json').read_text())
     print(f"FP32 adapter: {output} ({output.stat().st_size:,} bytes)")
     print(f"Jinja override: {override}")
 

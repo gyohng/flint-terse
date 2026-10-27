@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
-import { access, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { access, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { LMStudioClient } from './.tools/lms-sdk/node_modules/@lmstudio/sdk/dist/index.mjs';
 
@@ -43,6 +44,12 @@ try {
       },
     },
   });
+  if (!values.base && values.identifier === 'flint-terse') {
+    const presets = resolve(homedir(), '.lmstudio/config-presets');
+    await mkdir(presets, { recursive: true });
+    await copyFile(new URL('./sampling.preset.json', import.meta.url), resolve(presets, 'flint terse.preset.json'));
+    console.log('Sampling preset installed: flint-terse (select it in LM Studio).');
+  }
   console.log(`Ready in LM Studio: ${model.identifier}`);
 } finally {
   await client[Symbol.asyncDispose]();
