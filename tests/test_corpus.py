@@ -236,3 +236,20 @@ class CorpusTests(unittest.TestCase):
         self.assertFalse(check_python("def f(x): return x-1", ["assert f(2)==3"]))
         self.assertFalse(check_python("pass", []))
         self.assertFalse(check_python("open('/tmp/flint-denied', 'w').write('x')", ["assert True"]))
+
+    def test_python_checks_run_generated_unittests_and_benchmark_assertions(self):
+        code = """import unittest
+def f(x): return x + 1
+class TestFunction(unittest.TestCase):
+    def test_increment(self): self.assertEqual(f(2), 3)
+if __name__ == "__main__": unittest.main()
+"""
+        cases = [
+            (code, "assert f(2) == 3", True),
+            (code, "assert f(2) == 4", False),
+            (code.replace("self.assertEqual(f(2), 3)", "self.assertEqual(f(2), 4)"), "assert f(2) == 3", False),
+            ("raise SystemExit(0)", "assert False", False),
+        ]
+        for answer, check, expected in cases:
+            with self.subTest(answer=answer, check=check):
+                self.assertEqual(check_python(answer, [check]), expected)
