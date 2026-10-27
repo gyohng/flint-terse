@@ -214,6 +214,33 @@ class TrainingTests(unittest.TestCase):
                 self.assertLess(mx.max(mx.abs(grad[:, 17:])).item(), 1e-6)
         self.assertAlmostEqual(*gradients, places=6)
 
+    def test_same_prefix_attention_teacher_handles_style_and_retention_rows(self):
+        model = tiny_flint()
+        ids, offset = [2, 3, 6, 12, 7, 22, 1], 2
+        hidden = model.model(mx.array([ids[:-1]]))[0, offset - 1:]
+        initial = completion_logp(model, ids, offset).item()
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            features, corpus = folder / 'features.safetensors', folder / 'corpus.jsonl'
+            mx.save_safetensors(str(features), {'hidden': mx.concatenate([hidden] * 3),
+                'targets': mx.array(ids[offset:] * 3)}, metadata={'model': 'tiny', 'adapter': 'starting'})
+            corpus.write_text('\n'.join(json.dumps(row) for row in [
+                {'id': 'train', 'split': 'train'}, {'id': 'valid', 'split': 'valid'},
+                {'id': 'retain', 'split': 'train', 'preserve_only': True}]))
+            args = SimpleNamespace(model='tiny', teacher_features=[str(features)], paired=[corpus],
+                resume='starting', same_prefix_teacher=True, max_tokens=32, iters=2, accumulate=1,
+                seed=42, learning_rate=.0001, kl=2, start_weight=3, answer_weight=1,
+                opening_only=False, answer_only=False, preference_weight=0,
+                compact_preference_weight=0, preference_beta=.1, output=folder)
+            tokenizer = SimpleNamespace(convert_tokens_to_ids=lambda _: 7)
+            with patch('train.training_tokens', return_value=(ids, offset)), \
+                 patch('train.grad_checkpoint'), patch('mlx_lm.models.flint.scaled_dot_product_attention', training_attention):
+                train_paired(model, tokenizer, args)
+                self.assertGreater(completion_logp(model, ids, offset).item(), initial)
+                args.resume = 'wrong-teacher'
+                with self.assertRaisesRegex(ValueError, 'starting attention adapter'):
+                    train_paired(model, tokenizer, args)
+
     def test_retention_uses_the_starting_policy_without_native_teacher_features(self):
         model = tiny_flint()
         ids, offset = [2, 3, 6, 12, 7, 22, 1], 2

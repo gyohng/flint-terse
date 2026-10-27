@@ -212,6 +212,9 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
     parts = [mx.load(path, return_metadata=True) for path in args.teacher_features]
     if any(meta["model"] != args.model for _, meta in parts):
         raise ValueError("Teacher features must use the same frozen model")
+    same_prefix = getattr(args, 'same_prefix_teacher', False)
+    if same_prefix and any(meta.get('adapter') != args.resume for _, meta in parts):
+        raise ValueError('Same-prefix features must use the starting attention adapter')
     teacher = {k: mx.concatenate([part[k] for part, _ in parts]) for k in ("hidden", "targets")}
     del parts
     records, cursor = {"train": [], "valid": []}, 0
@@ -228,7 +231,12 @@ def train_paired(model, tokenizer, args, frozen_weights=None):
             raise ValueError(f"{row['id']}: context exceeds --max-tokens")
         cached = frozen_hidden(model, ids, first_layer)
         preserve = row.get("preserve_only", False)
-        if preserve:
+        if same_prefix:
+            if teacher['targets'][cursor:cursor + len(completion)].tolist() != completion:
+                raise ValueError(f"{row['id']}: same-prefix teacher feature order/token mismatch")
+            hidden = teacher['hidden'][cursor if preserve else cursor + closing + 1:cursor + len(completion)]
+            cursor += len(completion)
+        elif preserve:
             # Preserve the starting terse policy at these same prefixes, including its thinking.
             hidden = mx.stop_gradient(completion_hidden(model, ids, offset, cached, first_layer)[0])
             mx.eval(hidden)
@@ -337,6 +345,8 @@ def main(argv=None, loaded=None):
     p.add_argument("--paired", nargs="+", help="Compact thinking paired with unchanged native replies, in feature-file order")
     p.add_argument("--teacher-features", nargs="+", help="Original-reasoning features in paired corpus order")
     p.add_argument("--resume", help="Continue compatible adapters, optionally adding layers or targets, with a fresh optimizer")
+    p.add_argument('--same-prefix-teacher', action='store_true',
+                   help='Use the starting adapter at compact prefixes for answer and policy retention')
     p.add_argument("--think-adapter", help="Keep a native thinking-token adapter frozen while learning attention updates")
     p.add_argument("--opening-only", action="store_true", help="Paired mode: supervise only the first 16 reasoning tokens, retaining the full-thinking answer teacher")
     p.add_argument("--answer-only", action="store_true", help="Paired mode: learn verified replies without supervising sampled notes or the closing boundary")
@@ -362,6 +372,8 @@ def main(argv=None, loaded=None):
     args = p.parse_args(argv)
     if args.iters < 1 or args.accumulate < 1 or args.iters % args.accumulate:
         p.error("--iters must be positive and divisible by --accumulate")
+    if args.same_prefix_teacher and (not args.resume or not args.paired or args.compact_preference_weight):
+        p.error('--same-prefix-teacher requires paired --resume without compact preferences')
     if args.rank < 1 or args.layers < 1 or args.kl < 0 or args.learning_rate <= 0:
         p.error("rank/layers/learning-rate must be positive; KL must be nonnegative")
     if args.start_weight <= 0 or args.answer_weight < 0 or bool(args.paired) != bool(args.teacher_features):
