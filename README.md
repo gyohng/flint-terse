@@ -36,7 +36,7 @@ Supervised loss teaches reviewed short notes. Probability matching preserves fin
 - `--retention-kl` controls probability retention separately from the prose answer objective. `build-preferences --policy-retention` builds these rows from checked correct captures, keeping the model's actual notes and replies together.
 - `--attention-adapter PATH` instead freezes attention and learns only the opening-token adjustment alongside it.
 - `--preference-weight` adds DPO against checked wrong responses. `--compact-preference-weight` prefers reviewed short notes over native notes with identical final replies.
-- `--teacher-features PATH` reuses matching cached probability features. `--adapter-scale` scales the entire exported update, retaining FP32 matrices.
+- `--teacher-features PATH [PATH ...]` reuses matching cached probability features in corpus order. `--adapter-scale` scales the entire exported update, retaining FP32 matrices.
 
 `--steps` counts optimizer updates, each accumulating four examples. Validation selects the saved checkpoint. `--no-promote` keeps evaluation under `flint-terse-eval`.
 

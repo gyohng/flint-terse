@@ -68,7 +68,7 @@ def main(argv=None, loaded=None):
     p.add_argument('--revision', help='Hugging Face revision; the default checkpoint is pinned')
     p.add_argument('--model-dir', action='append', default=[], help='Additional local model search directory')
     p.add_argument('--data', nargs='+', default=['data/on-policy-pilot.jsonl', 'data/prose-extra-paired.jsonl', 'data/pruned-pilot.jsonl'])
-    p.add_argument('--teacher-features', type=Path, help='Reuse cached probability features for this exact teacher and corpus')
+    p.add_argument('--teacher-features', nargs='+', type=Path, help='Reuse cached probability features in corpus order')
     p.add_argument('--output', type=Path, default=Path('adapters/flint-terse'))
     p.add_argument('--steps', type=int, default=100)
     p.add_argument('--method', choices=('opening', 'tokens', 'attention'), default='opening',
@@ -211,7 +211,7 @@ def main(argv=None, loaded=None):
                     p.error('The attention adapter must use this exact GGUF')
             loaded = load_model(str(model), adapter_path=args.attention_adapter)
         with tempfile.TemporaryDirectory(prefix='flint-teacher-', dir='runs') as tmp:
-            features = args.teacher_features or Path(tmp) / 'features.safetensors'
+            features = args.teacher_features or [Path(tmp) / 'features.safetensors']
             if not args.teacher_features:
                 if args.same_prefix_teacher or args.teacher_adapter:
                     from mlx_lm.tuner.utils import load_adapters, remove_lora_layers
@@ -220,12 +220,12 @@ def main(argv=None, loaded=None):
                 cache_features.main([*args.data, '--model', str(model),
                     *(['--adapter', teacher_adapter] if teacher_adapter else []),
                     *([] if args.same_prefix_teacher or args.attention_adapter else ['--original-reasoning']),
-                    '--max-tokens', '16384', '--output', str(features)], loaded=loaded)
+                    '--max-tokens', '16384', '--output', str(features[0])], loaded=loaded)
                 if args.same_prefix_teacher or args.teacher_adapter:
                     remove_lora_layers(loaded[0])
             if args.method == 'attention':
                 import train
-                train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', str(features),
+                train.main(['--paired', *args.data, '--model', str(model), '--teacher-features', *map(str, features),
                     *(['--think-adapter', args.initial_adapter] if args.initial_adapter else []),
                     *(['--resume', args.resume_adapter] if args.resume_adapter else []),
                     *(['--same-prefix-teacher'] if args.same_prefix_teacher else []),
@@ -243,7 +243,7 @@ def main(argv=None, loaded=None):
                     '--learning-rate', str(args.learning_rate), '--max-tokens', '16384',
                     '--output', str(args.output)], loaded=loaded)
             else:
-                train_prompt.main([*args.data, '--model', str(model), '--teacher-features', str(features),
+                train_prompt.main([*args.data, '--model', str(model), '--teacher-features', *map(str, features),
                     '--think-tokens' if args.method == 'tokens' else '--think-opening',
                     '--answer-kl', '8', '--answer-weight', '1', '--start-weight', '3',
                     '--steps', str(args.steps), '--max-change', str(args.max_change),
