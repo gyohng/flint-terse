@@ -8,14 +8,18 @@ import gguf
 import numpy as np
 from safetensors.numpy import load_file
 
+from checkpoint import resolve_checkpoint
+
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--adapter", type=Path, default=Path("adapters/opening-pruned"))
-    p.add_argument("--model", type=Path, default=Path("models/flint-int4"))
+    p.add_argument("--adapter", type=Path, default=Path("adapters/flint-terse"))
+    p.add_argument("--model", type=Path, help="Base model path; defaults to the pinned official GGUF")
     args = p.parse_args(argv)
     config = json.loads((args.adapter / "adapter_config.json").read_text())
     weights = load_file(args.adapter / "adapters.safetensors")
+    if args.model is None:
+        args.model, _ = resolve_checkpoint()
     if config.get("prompt_tokens") or any(not name.endswith(('.lora_a', '.lora_b')) for name in weights):
         p.error("Expected native embedding or projection LoRA tensors")
     if args.model.suffix.lower() == '.gguf':
