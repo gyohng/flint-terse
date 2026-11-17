@@ -1,9 +1,17 @@
+# Python and tool environments
 .venv/
-.tools/
 __pycache__/
+.tools/
+
+# Large local artefacts: base checkpoints, trained adapters, run logs
 models/
 adapters/
 runs/
+*.gguf
+*.safetensors
+
+# Derived corpora
 data/prepared*/
 data/sources/
+
 .DS_Store

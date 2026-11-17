@@ -50,9 +50,14 @@ except BaseException:
     sys.exit(1)
 sys.exit(0 if result.wasSuccessful() else 1)
 """
+    if sys.platform == "darwin":
+        command = ["/usr/bin/sandbox-exec", "-p", policy, python, "-I", "-S", "-B", "-c", runner]
+    else:
+        # Linux: a user namespace without network; the runner's CPU limit and the timeout bound the rest.
+        command = ["/usr/bin/unshare", "-r", "-n", python, "-I", "-S", "-B", "-c", runner]
     try:
         result = subprocess.run(
-            ["/usr/bin/sandbox-exec", "-p", policy, python, "-I", "-S", "-B", "-c", runner],
+            command,
             input=source, text=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             timeout=4, cwd="/tmp",
         )

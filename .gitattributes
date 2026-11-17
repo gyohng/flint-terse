@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.py     text diff=python
+*.sh     text eol=lf
+*.jsonl  text -diff linguist-generated
+*.jinja  text
+*.md     text diff=markdown
+
+*.gguf        binary
+*.safetensors binary
+*.png         binary
