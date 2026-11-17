@@ -112,7 +112,8 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 22 | **iteration 2 = flint-terse-minimalist** | **97** | **107** | 84% | 86% | 89% | three seeds: code 97 / 94 / 89 |
 | 23 | iteration 3 | 89 | 104 | 81% | 86% | 88% | oscillates |
 | 24 | #22 + prose pass on its shortest answers | 90 | 106 | 92% | 88% | 86% | overshoots |
-| 25 | On-policy mini-batch GRPO from flint-terse, B=250, step 4 (100 prompts × 8 per step) | 91 | 108 | 87% | 90% | — | step 8 pending |
+| 25 | On-policy mini-batch GRPO from flint-terse, B=250, step 4 (100 prompts × 8 per step) | 91 | 108 | 87% | 90% | — | |
+| 26 | same, step 8 | 88 | 111 | 85% | 88% | — | no recovery at this terseness |
 
 Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–25 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
