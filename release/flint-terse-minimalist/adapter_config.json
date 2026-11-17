@@ -1,0 +1,33 @@
+{
+  "fine_tune_type": "lora",
+  "num_layers": 49,
+  "lora_parameters": {
+    "rank": 32,
+    "scale": 1.0,
+    "dropout": 0.0,
+    "keys": [
+      "down_proj",
+      "gate_proj",
+      "k_proj",
+      "o_proj",
+      "q_proj",
+      "up_proj",
+      "v_proj"
+    ]
+  },
+  "base_model": {
+    "repo": "RecursiveSI/flint-int4-gguf",
+    "revision": "9c47151036bc2c34331142dda04488bceab2bc9f",
+    "filename": "flint-int4-q4_1.gguf",
+    "sha256": "43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b"
+  },
+  "training": {
+    "rank": 32,
+    "alpha": 32.0,
+    "epochs": 1.0,
+    "learning_rate": 2e-05,
+    "kl": 2.0
+  },
+  "description": "flint-terse-minimalist: flint-terse plus two iterations of fixed-budget RL (B=300). 82-89% less thinking in every category; code ~9/110 below the base.",
+  "name": "flint-terse-minimalist"
+}

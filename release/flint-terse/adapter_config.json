@@ -2,12 +2,17 @@
   "fine_tune_type": "lora",
   "num_layers": 49,
   "lora_parameters": {
-    "rank": 8,
-    "scale": 1.1,
+    "rank": 32,
+    "scale": 1.0,
     "dropout": 0.0,
     "keys": [
-      "self_attn.q_proj",
-      "self_attn.v_proj"
+      "down_proj",
+      "gate_proj",
+      "k_proj",
+      "o_proj",
+      "q_proj",
+      "up_proj",
+      "v_proj"
     ]
   },
   "base_model": {
@@ -16,5 +21,13 @@
     "filename": "flint-int4-q4_1.gguf",
     "sha256": "43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b"
   },
-  "model": "RecursiveSI/flint-int4-gguf:flint-int4-q4_1.gguf"
+  "training": {
+    "rank": 32,
+    "alpha": 32.0,
+    "epochs": 1.0,
+    "learning_rate": 3e-05,
+    "kl": 2.0
+  },
+  "description": "flint-terse: rank-32 FP32 LoRA on attention q/k/v/o, the shared expert and the dense MLPs, trained on the unchanged int4 GGUF. Budget RL from the base (budgets 600/400/300 tokens), then a prose pass replaying its own verified code answers. Code at base level with ~62% less code thinking; 80-87% less on math, prose and explanations.",
+  "name": "flint-terse"
 }
