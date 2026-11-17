@@ -1,20 +1,16 @@
 # flint-terse
 
-Goal: teach Flint, via a LoRA adapter, to write terse shorthand (math notation, caveman speak) inside `<think>`, with final replies unchanged. Prompting can't reach the thinking section. `example-vomit.txt` shows a before/after thinking trace. README.md covers the results so far and the MLX pipeline.
+Goal: LoRA adapters that make Flint think briefly, in shorthand, inside `<think>` while final replies stay as good as the base's; prompting can't reach the thinking section. `example-vomit.txt` shows a before/after trace. README.md has the models, results, the full experiment table and how to reproduce.
+
+## Constraints
+- Train and evaluate against the unchanged int4 GGUF (`RecursiveSI/flint-int4-gguf`, `flint-int4-q4_1.gguf`, pinned revision and SHA-256 in `checkpoint.py`), never bf16. Deliverable: a small FP32 GGUF LoRA adapter that LM Studio/llama.cpp apply over that exact file (`./run.sh deploy`). Adapter weights are not committed; they go to Hugging Face.
+- Coding quality comes first; math is a secondary check.
+- LoRA targets must be tensors llama.cpp adapts: attention q/k/v/o, shared expert, dense MLPs (no per-expert LoRA).
+
+## Training host (NVIDIA GB10, 119 GB unified memory)
+- `scripts/setup.sh` (CUDA torch + pip CUDA 13.0 toolchain, pinned llama.cpp, base download), then `scripts/reproduce.sh`.
+- GPU and system share memory: run one memory-heavy job at a time (llama-server with 32 slots ~45 GB, training ~40 GB).
+- Logs and samples go to `runs/` (not in git); adapters to `adapters/` (not in git).
 
 ## Where it stands
-Oct 25–27, on the Mac with MLX: rank-8 q/v LoRA on the frozen `flint-int4` GGUF coefficients, answer KL protecting final replies, 410 reviewed pairs. Released as `release/flint-terse/`. It cuts thinking about 70% on math/code, about 40% on ordinary requests and only about 6% on conversational code. The target is over 70% everywhere. A larger corpus (`data/final-paired.jsonl`) leaked think delimiters and was rejected. Per-experiment logs are in `runs/`, which is not in git.
-
-## Moving to spark-vimu
-The trainers (`train.py`, `gguf_model.py`, `finetune.py`) are MLX and run only on Apple Silicon. Corpus, eval and export logic carries over. On Spark, train against the bf16 original instead of quantized GGUF coefficients.
-
-- Box: NVIDIA GB10, 119 GB unified memory, aarch64, Ubuntu 24.04, driver 580. nvidia-smi is at `/run/nvidia/driver/usr/bin/nvidia-smi`. No host CUDA toolkit. Use uv with CUDA torch wheels, or an NGC container.
-- Base: `RecursiveSI/flint`. `FlintForCausalLM`, MoE, 40B total / ~2.5B active, bf16, 80 GB, downloading to `models/flint` (log in `models/download.log`). The repo has an `sglang/` folder, so check whether transformers supports the arch before writing a trainer.
-- Arch: hybrid full/sliding attention (window 513), attention sinks, 256 experts plus a shared expert, layers 0–1 dense, vocab 150144.
-- Deploy target is still LM Studio on the Mac: a GGUF LoRA adapter on the unchanged base (`./run.sh deploy`).
-
-## Next
-1. Get a CUDA trainer running on the bf16 base (LoRA, or QLoRA if memory needs it). Reproduce the release recipe as a sanity check.
-2. Push compression further: on-policy distillation or RL (GRPO-style) with a length penalty plus KL to the base, focused on ordinary and conversational prompts.
-3. Use Spark for corpus generation and eval. On-policy sampling from the base was the slow part on the Mac.
-4. Export the adapter to GGUF so it applies to the int4 base used in LM Studio. Verify on the Mac.
+flint-terse: code 102.7/110 (base 102.3) at 62% less code thinking, 79-85% less on math/prose. flint-terse-minimalist: 82-89% less everywhere, code 93.3. Larger code cuts cost accuracy on this model (base: 81/110 with no thinking, 102 only at ~512 tokens). Not yet verified in LM Studio on a Mac.

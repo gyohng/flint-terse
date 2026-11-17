@@ -1,89 +1,144 @@
 # flint-terse
 
-Shorter working notes inside `<think>`, with normal, complete final replies. Deployment uses the **unchanged official Flint GGUF plus a separate FP32 LoRA adapter**. No instruction is appended to the user's message.
+LoRA adapters that make [Recursive Flint](https://huggingface.co/RecursiveSI/flint) think briefly, in shorthand, inside `<think>` while keeping its final answers. Each adapter is a small FP32 GGUF LoRA for the unchanged official int4 GGUF and runs in LM Studio and llama.cpp. The base is never merged, rewritten or requantized, and nothing is added to the user's prompt.
 
-The packaged adapter is the best balanced result tested here. **It does not achieve the requested >70% thinking reduction consistently**, especially for conversational coding. The last expanded-corpus run produced thinking-delimiter leakage and duplicated text in final replies, so it was rejected and its evaluation stopped.
-
-## Use in LM Studio
-
-Requires Apple Silicon, `uv`, Node.js/npm and regular LM Studio with its `lms` command available.
-
-```sh
-./run.sh deploy
-# Optional longer context:
-./run.sh deploy --context 131072
+```
+"Hi!"     base:  123 thinking tokens ("The user has just said "Hi!" — a simple greeting. ...")
+          terse:  15 tokens   User greets; respond friendly; ask how can help; brief; casual.
 ```
 
-This finds the exact base in local `models/` or LM Studio folders, downloads it if missing, and loads the packaged adapter as **flint-terse**. `--model-dir PATH` adds a search directory. Deployment installs only the lightweight download and LM Studio dependencies; it does not require the MLX training environment.
+## Models
 
-The portable bundle is in `release/flint-terse/`: the GGUF adapter, identical FP32 factors in Safetensors, configuration and Jinja override. The GGUF adapter is 13,661,152 bytes. Copy the bundle with these scripts or clone the repo on another Mac, then run `deploy`. The base must match exactly; a different quantization is a different checkpoint.
+| Adapter | Use it for | Code (110 tasks) | Math (120) | Thinking cut: code / math / prose |
+| --- | --- | ---: | ---: | --- |
+| unchanged base | | 102.3 | 103.3 | — |
+| **flint-terse** | coding, with the base's accuracy | **102.7** | **109.7** | 62% / 79% / 85% |
+| **flint-terse-minimalist** | the least thinking | 93.3 | 104.3 | 84% / 86% / 89% |
 
-LM Studio's API identifier is `flint-terse`; its GUI may still display the base model's name. The launcher installs the `flint-terse` sampling preset. Select it in the GUI for the tested sampling settings. Rerun `deploy` after unloading or restarting: the adapter attachment is not persistent.
+Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. Adapter weights will be published on Hugging Face; `release/<name>/` holds each adapter's configuration, the exact base it requires and the chat template.
 
-## Base and precision
+Both adapters need the exact base: [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), file `flint-int4-q4_1.gguf`, revision `9c47151036bc2c34331142dda04488bceab2bc9f`, SHA-256 `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`. A different quantization is a different checkpoint.
 
-Default: [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), **flint-int4-q4_1.gguf**, revision `9c47151036bc2c34331142dda04488bceab2bc9f`.
+## Use in LM Studio (Mac)
 
-SHA-256: `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`.
-
-This is the publisher's GGUF counterpart of `RecursiveSI/flint-int4`, distinct from the Q4_K_M conversion. Its integer codes match the MLX export; some BF16 scales and offsets were rounded to FP16 by the publisher. Training uses the actual GGUF coefficients. The base is never merged, rewritten or requantized, and the adapter remains FP32. Export verifies every adapter coefficient after the layout conversion.
-
-The external Jinja override only removes the incompatible `replace("\x00", "")` operation. The downloaded GGUF stays untouched.
-
-Training has run on a 128 GB Mac. LM Studio estimates 28.27 GiB at 64K context, 31.59 GiB at 128K and 38.23 GiB at 256K, with full GPU offload, one prediction slot and no MTP. These are load estimates, not measured peak memory or long-context quality results.
-
-## Results
-
-| Test | Unchanged base | Packaged adapter |
-| --- | ---: | ---: |
-| Math | 99/120 | 105/120 |
-| Code | 73/80 | 72/80 |
-| Combined math/code | 172/200 | 177/200 |
-| Conversational code | 6/6 | 6/6 |
-| OpenClaw scenarios | 6/6 | 6/6 |
-
-Thinking falls by **69.9% on shared correct math/code answers**, **40.7% on 14 ordinary requests completed by both models**, and **6.0% on the six conversational code tasks**. Ordinary prose and coding requests can still produce long internal narration. The packaged adapter is the unchanged `gguf-attention-055` candidate.
-
-Evaluations use temperature 1, top-p .95, top-k 20, min-p 0, repetition penalty 1, seed 42 per request, a 4,096-token output budget and 64K context. The two 100-task sets have been used for candidate selection: these are development results, not untouched confirmation tests. The saved baseline is reused when checkpoint, tasks and settings match.
-
-## Retrain
+Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command. Put the adapter's `adapter.gguf` into its `release/<name>/` directory, then:
 
 ```sh
-./run.sh finetune
-# Other Flint checkpoints, trained against their own unchanged coefficients:
-./run.sh finetune /path/to/flint.gguf --output adapters/my-flint-terse
-./run.sh finetune owner/repository:filename.gguf --revision COMMIT
-# Require the original compression target before automatic deployment:
-./run.sh finetune --output adapters/strict --min-thinking-reduction 70
+./run.sh deploy                                         # flint-terse
+./run.sh deploy --adapter release/flint-terse-minimalist
+./run.sh deploy --context 131072                        # longer context
 ```
 
-The default reproduces the balanced recipe: rank-8 query/value LoRA across 49 layers, 200 optimizer updates with four-example accumulation, learning rate 0.00002, answer KL weight 8 and exported strength 0.55. It uses the 410 reviewed pairs in `data/adaptive-sampled.jsonl` and `data/adaptive-native.jsonl`. MLX supplies differentiation; LM Studio's llama.cpp runtime runs the exported adapter.
+`deploy` finds or downloads the exact base, imports it, loads it with the adapter as `flint-terse` and installs the tested sampling preset (temperature 1, top-p .95, top-k 20). The Jinja override only removes the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Rerun `deploy` after unloading or restarting.
 
-The pipeline finds or downloads the base, trains, verifies and exports the separate adapter, evaluates it and loads passing results as `flint-terse`. Existing output folders are not overwritten. Accuracy may drop by at most two percentage points overall and per task family; reply completion and delimiter checks must also pass. **The default compression floor is 0% to permit the selected balanced result.** Set `--min-thinking-reduction 70` to enforce >70% reduction on both shared correct answers and ordinary completed replies. New training runs are not guaranteed to reproduce the saved scores.
+The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`).
 
-Explicit `--data`, `--steps`, `--layers`, `--rank` and `--adapter-scale` override the recipe. Other experimental methods remain available through `./run.sh finetune --help`. Supported inputs use Flint's architecture and Q4_1, Q4_K, Q6_K, Q8_0, F16 or F32 tensors.
+## Reproduce the training (NVIDIA GPU)
 
-## Corpus
-
-Supervised loss teaches short calculations, algorithms and necessary checks. Probability matching protects final replies, which have no shortening objective. The method is LoRA on a frozen quantized base, not a claim of a universally best fine-tuning method.
-
-The final experimental corpus, `data/final-paired.jsonl`, contains 699 examples, including 320 checked code answers across 212 distinct tasks. It restores useful constraint notes for writing instead of teaching empty thoughts. Its 76 new conversational pairs passed native code checks, a likelihood screen against the exact GGUF, and code checks after regenerating answers from the short notes. This corpus did **not** produce the selected release.
-
-To extend the corpus:
-
-1. Collect native responses with `capture` or `batch-capture`; keep evaluation tasks separate.
-2. Use `rewrite`, or `prune --build` followed by `prune --selections`, to propose shorter notes and check answer likelihood. `distill build/select/pair` offers a demonstration-based alternative.
-3. Regenerate answers with `batch-capture --continue-thinking` and run their checks. This verifies supplied notes; it is not a free-generation benchmark.
-4. Review the notes and final replies, then mark accepted rows `approved=true`. Test success and probability agreement alone do not establish correctness.
-
-`data/code-prose-extra-prompts.jsonl` contains the 180 additional conversational prompts; recreate it at a new path with `./run.sh build-corpus --code-prose OUTPUT`. Corpus collection, editing and scoring accept `--model` and default to the same pinned GGUF.
-
-Sources: [GSM8K](https://github.com/openai/grade-school-math), Google's [MBPP](https://huggingface.co/datasets/google-research-datasets/mbpp) (CC BY 4.0; prompts adapted), and [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk). [TokenSkip](https://arxiv.org/abs/2502.12067) informed trace pruning; optional preference training follows [DPO](https://arxiv.org/abs/2305.18290). The current recipe uses fixed training prefixes, not full online distillation or GRPO. Attention-sink handling and shortest-correct sampling borrow ideas from `../flint-terse2`.
-
-## Check the scripts
+Tested on an NVIDIA GB10 (119 GB unified memory, aarch64, Ubuntu 24.04, driver 580). Training peaks at about 40 GB, and the llama.cpp sampling server uses about 45 GB with 32 slots. They never run at the same time.
 
 ```sh
-./run.sh test
+PY=python3.15 scripts/setup.sh        # CUDA torch + toolkit, pinned llama.cpp, int4 base (26 GB)
+PY=python3.15 scripts/reproduce.sh    # baseline, both adapters, evaluation (~20 h)
 ```
 
-Dependencies are pinned in `requirements.txt`. The tests cover exact GGUF coefficients and gradients, adapter export, probability retention, corpus handling and evaluation checks. Every command accepts `--help`.
+`setup.sh` installs into the given interpreter's environment; it uses `uv` when available. Set `CUDA_ARCH` for GPUs other than GB10 (for example `90` for H100). `reproduce.sh` writes `release/flint-terse/adapter.gguf` and `release/flint-terse-minimalist/adapter.gguf`. RL sampling is stochastic, so expect scores within a few tasks of the tables.
+
+The individual steps:
+
+```sh
+scripts/eval.sh base base                                   # baseline -> runs/spark-base-*.jsonl
+PROMPTS=300 LR=5e-5 SEED=20 scripts/rl.sh base budget "600 400 300"
+scripts/prose_pass.sh adapters/budget-3 runs/budget-3-samples.jsonl flint-terse
+PROMPTS=400 LR=2e-5 SEED=40 scripts/rl.sh adapters/flint-terse minimal "300 300"
+scripts/eval.sh adapters/flint-terse flint-terse [SEED]     # compare with the base run
+```
+
+## How it works
+
+Everything trains against the int4 GGUF coefficients that LM Studio runs. Transformers has no Flint support, so `flint_torch.py` implements it:
+- Routed experts stay packed as Q4_1, about 28 GB on the GPU.
+- A small CUDA kernel dequantizes them bit-exactly (`q4_kernels.py`), and they run as grouped GEMMs.
+- Attention handles learned sinks, the 513-token sliding window and packed sequences.
+
+The LoRA is rank 32, FP32, on attention q/k/v/o, the shared expert and the two dense MLPs. These are all tensors llama.cpp applies adapters to; per-expert LoRA would be far too large. Sampling and evaluation use a CUDA llama.cpp server with the GGUF adapter applied (`scripts/serve.sh`, `spark_eval.py`).
+
+1. **Budget RL from the base** (`rl_sample.py`, `rescore_rl.py`, `scripts/rl.sh`):
+   - Each iteration samples 8 answers for each of 300 code prompts (MBPP-derived, evaluation tasks excluded).
+   - An answer gets reward 1 if its tests pass *and* its thinking fits the budget, otherwise 0.
+   - Rewards are centred per group and scaled by the batch standard deviation, then trained with policy gradient over the whole completion. Terse prose rows are replayed with KL holding replies to the base.
+   - Budgets go 600 → 400 → 300 tokens.
+2. **Prose pass** (`scripts/prose_pass.sh`): one supervised epoch adds terse thinking for prose and chat, from the base's own compressed notes (`gen_corpus.py`). It also replays the adapter's own shortest correct code answers so code holds. This gives **flint-terse**.
+3. **Fixed-budget RL**: two more 300-token iterations with 400 prompts each give **flint-terse-minimalist**.
+
+## What limits code compression
+
+The base itself needs its reasoning on code. With thinking cut off at a fixed length (`budget_probe.py`) it scores:
+
+| Base thinking budget | 0 | 128 | 256 | 512 | unlimited |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Code (110 tasks) | 81 | 90 | 92 | 102 | 102 |
+
+Every adapter lies on the same accuracy/terseness curve for code. Math, prose and chat compress 80–90% with no loss. Code keeps base accuracy down to about 60% less thinking, and loses tasks steadily beyond that. Given the first 25–50% of the base's own reasoning, terse adapters solve 92–94 of 95 base-solved tasks, but they then continue verbosely: the accuracy comes from the length.
+
+## What was tried
+
+All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 42 and 4,096 output tokens unless noted. Scores are out of 110 code tasks and 120 math tasks; the base gets 102 and 104 with this seed. Cuts are thinking tokens saved against the base. "Prose" covers the 36 held-out prose and chat prompts.
+
+| # | Approach | Code | Math | Code cut | Math cut | Prose cut | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 0 | Previous MLX adapter (rank 8, q/v; Mac evals) | 72/80 | 105/120 | ~70% (math+code) | | 41% | conversational code only 6% cut |
+| 1 | SFT round 0: base compresses its own thinking, answers checked (1,118 rows) | 84 | 86 | 92% | 94% | 88% | thinking ~20 tokens even on hard tasks |
+| 2 | SFT round 1: + verified samples of round 0 (expert iteration) | 87 | 92 | 92% | 96% | 88% | |
+| 3 | Round 1 at adapter strength 0.5 | 91 | 105 | 48% | 80% | — | |
+| 4 | SFT round 2: budgeted notes keeping checks and traps | 81 | 91 | 87% | 95% | 87% | |
+| 5 | RL, length reward normalised per group | 82 | 85 | 98% | 97% | 91% | length noise dominated the signal |
+| 6 | RL with a length floor and batch normalisation (RL 1b) | 88 | 96 | 86% | 95% | 89% | best terse SFT/RL start |
+| 7 | RL 1b, second iteration | 85 | 96 | 94% | 96% | 89% | plateau |
+| 8 | SFT round 3: insight-only notes, empty when not needed | 85 | 90 | 100% | 95% | 86% | learned to never think on code |
+| 9 | SFT round 3b: one-line scan notes instead of empty | 85 | 89 | 74% | 95% | 89% | |
+| 10 | SFT round 4: adaptive easy/medium/hard notes | 84 | 89 | 89% | 95% | 89% | |
+| 11 | SFT round 5: full-shorthand rewrite of every step | 87 | 91 | 45% | 95% | 85% | more thinking did not help |
+| 12 | RL 1b at strength 0.35 / 0.5 / 0.6 / 0.65 / 0.7 | 103 / 103 / 100 / 95 / 96 | 107 / 106 / 105 / 103 / 104 | 32 / 30 / 58 / 71 / 74% | 65 / 81 / 89 / 92 / 94% | 8 / 39 / 79 / 76 / 82% | smooth trade-off |
+| 13 | **Budget RL from the base, B=600** | 100 | 110 | 40% | 76% | 53% | starting from the accurate base |
+| 14 | Budget RL, B=400 | 100 | 111 | 54% | 80% | 55% | |
+| 15 | Budget RL, B=300 | 98 | 109 | 70% | 86% | 79% | three seeds: 98 / 94 / 89 |
+| 16 | Budget RL, B=200 | — | — | — | — | — | collapsed into repetition |
+| 17 | **#15 + prose pass = flint-terse** | **106** | **111** | 60% | 83% | 85% | three seeds: code 106 / 102 / 100, math 111 / 111 / 107 |
+| 18 | flint-terse + budget RL at B=250 | 83 | 109 | 85% | 88% | 89% | overshoots |
+| 19 | Exact mix 0.7·flint-terse + 0.3·#18 | 95 | 108 | 68% | 85% | 84% | |
+| 20 | Exact mix 0.5·flint-terse + 0.5·#18 | 91 | 105 | 77% | 86% | 85% | |
+| 21 | flint-terse + fixed-budget RL B=300, iteration 1 | 93 | 109 | 78% | 86% | 87% | |
+| 22 | **iteration 2 = flint-terse-minimalist** | **97** | **107** | 84% | 86% | 89% | three seeds: code 97 / 94 / 89 |
+| 23 | iteration 3 | 89 | 104 | 81% | 86% | 88% | oscillates |
+| 24 | #22 + prose pass on its shortest answers | 90 | 106 | 92% | 88% | 86% | overshoots |
+| 25 | On-policy mini-batch GRPO from flint-terse, B=250, step 4 (100 prompts × 8 per step) | 91 | 108 | 87% | 90% | — | step 8 pending |
+
+Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–25 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
+
+## Repository
+
+| Path | Contents |
+| --- | --- |
+| `flint_torch.py`, `q4_kernels.py` | PyTorch Flint on the int4 GGUF, CUDA Q4_1 dequant |
+| `spark_train.py` | LoRA training: thinking SFT with answer KL, policy gradient |
+| `rl_sample.py`, `rescore_rl.py` | grouped sampling with verified rewards; truncation or length-floor advantages |
+| `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` | on-policy compressed-thinking corpora |
+| `build_pool.py`, `build_code_pool.py` | prompt pools (evaluation prompts excluded) |
+| `spark_eval.py`, `budget_probe.py`, `check_port.py` | evaluation, base thinking-budget probe, llama.cpp parity check |
+| `interp_adapters.py` | exact LoRA interpolation and SVD refit |
+| `scripts/` | `setup.sh`, `serve.sh`, `eval.sh`, `rl.sh`, `prose_pass.sh`, `reproduce.sh` |
+| `data/` | prompts, evaluation sets, all generated corpora and base-sample logs |
+| `release/` | adapter metadata for deployment |
+| `export_adapter.py`, `deploy.py`, `load_lmstudio.mjs`, `run.sh` | GGUF export and LM Studio deployment |
+
+The earlier Apple Silicon pipeline (`./run.sh finetune`, `train.py`, `gguf_model.py`, `finetune.py`) still runs. It trained rank-8 q/v LoRA with MLX on the same frozen GGUF coefficients (row 0). `./run.sh test` runs its tests.
+
+## Sources
+
+Prompts and tasks: [GSM8K](https://github.com/openai/grade-school-math), Google's [MBPP](https://huggingface.co/datasets/google-research-datasets/mbpp) (CC BY 4.0; prompts adapted), [SmolTalk](https://huggingface.co/datasets/HuggingFaceTB/smoltalk).
+
+Methods:
+- truncation-reward and budget-schedule RL: DLER ([arXiv 2510.15110](https://arxiv.org/abs/2510.15110)) and ThinkPrune ([arXiv 2504.01296](https://arxiv.org/abs/2504.01296));
+- compressed-trace SFT: TokenSkip ([arXiv 2502.12067](https://arxiv.org/abs/2502.12067));
+- LoRA placement and RL capacity: [LoRA Without Regret](https://thinkingmachines.ai/blog/lora/) (Thinking Machines, 2025).
