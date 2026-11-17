@@ -1,0 +1,11 @@
+# CUDA training/eval host (tested: NVIDIA GB10, aarch64, driver 580, Python 3.15).
+# torch comes from the CUDA 13.0 wheel index: see scripts/setup.sh.
+transformers==5.20.2
+safetensors
+huggingface_hub
+numpy
+# nvcc and headers for the Q4_1 dequant kernel and the llama.cpp CUDA build (match driver CUDA 13.0)
+nvidia-cuda-nvcc==13.0.*
+nvidia-cuda-crt==13.0.*
+nvidia-nvvm==13.0.*
+nvidia-cuda-cccl==13.0.*
