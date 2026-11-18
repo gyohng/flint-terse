@@ -4,6 +4,7 @@
 # them (reward 1 if the tests pass and thinking <= budget, else 0; group-centred, batch-normalised),
 # trains one epoch of policy gradient plus prose replay, exports the GGUF and (EVAL=1) evaluates.
 #   scripts/rl.sh START OUT "600 400 300"      START: adapter directory or "base"
+#   scripts/rl.sh START OUT "rel0.3 rel0.3"     relative budget: 30% of the base's thinking per task
 # Outputs adapters/OUT-1, OUT-2, ...; samples and logs in runs/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,10 +28,11 @@ for B in $BUDGETS; do
   until curl -sf localhost:8080/health >/dev/null; do sleep 3; done
   "$PY" rl_sample.py data/spark-pool.jsonl,data/spark-code-pool.jsonl --output runs/$NAME-samples.jsonl \
     --ref-log data/spark-r0.log.jsonl --families code --limit "$PROMPTS" --group "$GROUP" --seed $((SEED + it)) \
-    "${SCALE[@]}" --max-tokens $((B + 1500)) --workers 32 > runs/$NAME-samples.log 2>&1
+    "${SCALE[@]}" --max-tokens $([[ $B == rel* ]] && echo 3000 || echo $((B + 1500))) --workers 32 > runs/$NAME-samples.log 2>&1
   tail -1 runs/$NAME-samples.log
-  "$PY" rescore_rl.py runs/$NAME-samples.jsonl --ref-log data/spark-r0.log.jsonl --budget "$B" \
-    --output runs/$NAME-scored.jsonl
+  if [[ $B == rel* ]]; then BUDGET=(--rel-budget "${B#rel}"); else BUDGET=(--budget "$B"); fi
+  "$PY" rescore_rl.py runs/$NAME-samples.jsonl --ref-log data/spark-r0.log.jsonl data/spark-insight.log.jsonl \
+    data/spark-ll-extra.log.jsonl data/spark-hard.log.jsonl "${BUDGET[@]}" --output runs/$NAME-scored.jsonl
   pkill -x llama-server || true; sleep 4
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PY" spark_train.py --data runs/$NAME-scored.jsonl \
     data/spark-replay-prose.jsonl "${RESUME[@]}" --output adapters/$NAME --epochs 1 --accumulate "$ACCUM" \
