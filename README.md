@@ -115,8 +115,10 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 25 | On-policy mini-batch GRPO from flint-terse, B=250, step 4 (100 prompts × 8 per step) | 91 | 108 | 87% | 90% | — | |
 | 26 | same, step 8 | 88 | 111 | 85% | 88% | — | no recovery at this terseness |
 | 27 | flint-terse + RL with a per-task relative budget (thinking ≤ 30% of the base's own length on that task, floor 64) | 80 | 103 | 94% | 93% | 91% | overshoots hardest; stopped after one iteration |
+| 28 | Exact mix 0.6·flint-terse + 0.4·minimalist (three seeds) | 97 / 96 / 98 | 109 / 109 / 105 | 70% | 84% | — | code mean 97.0 |
+| 29 | Exact mix 0.4·flint-terse + 0.6·minimalist, rank 64 and its rank-32 SVD refit (six runs) | 94 / 97 / 101 / 96 / 96 / 91 | 105 / 109 / 105 / 108 / 108 / 105 | 75% | 84% | 85% | code mean 95.8; direct 82%, explanations 91% cut |
 
-Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–27 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
+Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–29 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
 ## Repository
 

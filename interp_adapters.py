@@ -34,11 +34,14 @@ def main():
     out = {}
     if args.refit:
         for name, (a, b) in fa.items():
-            d = (a.double().cuda() @ b.double().cuda())  # [in, out]
-            u, s, vh = torch.linalg.svd(d, full_matrices=False)
+            # delta = a @ b has rank <= r_in: SVD its small core instead of the full matrix.
+            qa, ra = torch.linalg.qr(a.double())          # a = qa ra
+            qb, rb = torch.linalg.qr(b.double().T)        # b = rb^T qb^T
+            uc, s, vhc = torch.linalg.svd(ra @ rb.T)
+            u, vh = qa @ uc, vhc @ qb.T
             r = args.refit
-            out[name + ".lora_a"] = (u[:, :r] * s[:r].sqrt()).float().cpu().contiguous()
-            out[name + ".lora_b"] = (s[:r].sqrt()[:, None] * vh[:r]).float().cpu().contiguous()
+            out[name + ".lora_a"] = (u[:, :r] * s[:r].sqrt()).float().contiguous()
+            out[name + ".lora_b"] = (s[:r].sqrt()[:, None] * vh[:r]).float().contiguous()
         rank = args.refit
     else:
         _, fb = factors(args.b)
