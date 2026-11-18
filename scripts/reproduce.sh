@@ -14,8 +14,9 @@ EVAL=0 PROMPTS=300 LR=5e-5 ACCUM=4 SEED=20 scripts/rl.sh base budget "600 400 30
 scripts/prose_pass.sh adapters/budget-3 runs/budget-3-samples.jsonl flint-terse
 scripts/eval.sh adapters/flint-terse flint-terse
 
-# 3. Two more RL iterations at a fixed 300-token budget, 400 prompts each -> flint-terse-minimalist.
-EVAL=0 PROMPTS=400 LR=2e-5 ACCUM=4 SEED=40 scripts/rl.sh adapters/flint-terse minimal "300 300"
+# 3. Add per-expert LoRA (rank 8, last 16 MoE layers) and run two RL iterations at a fixed 300-token budget,
+#    400 prompts each -> flint-terse-minimalist.
+EVAL=0 PROMPTS=400 LR=2e-5 ACCUM=4 SEED=40 EXPERT_RANK=8 EXPERT_LAYERS=16 scripts/rl.sh adapters/flint-terse minimal "300 300"
 rm -rf adapters/flint-terse-minimalist && cp -r adapters/minimal-2 adapters/flint-terse-minimalist
 scripts/eval.sh adapters/flint-terse-minimalist flint-terse-minimalist
 

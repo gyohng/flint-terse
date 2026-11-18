@@ -13,7 +13,7 @@ LoRA adapters that make [Recursive Flint](https://huggingface.co/RecursiveSI/fli
 | --- | --- | ---: | ---: | --- |
 | unchanged base | | 102.3 | 103.3 | — |
 | **flint-terse** | coding, with the base's accuracy | **102.7** | **109.7** | 62% / 79% / 85% |
-| **flint-terse-minimalist** | the least thinking | 93.3 | 104.3 | 84% / 86% / 89% |
+| **flint-terse-minimalist** | the least thinking | 98.0 | 108.0 | 81% / 86% / 85% |
 
 Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. Adapter weights will be published on Hugging Face; `release/<name>/` holds each adapter's configuration, the exact base it requires and the chat template.
 
@@ -31,7 +31,7 @@ Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command. 
 
 `deploy` finds or downloads the exact base, imports it, loads it with the adapter as `flint-terse` and installs the tested sampling preset (temperature 1, top-p .95, top-k 20). The Jinja override only removes the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Rerun `deploy` after unloading or restarting.
 
-The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`).
+The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. flint-terse-minimalist also uses llama.cpp's per-expert LoRA path. It is verified there but untested in LM Studio's bundled llama.cpp. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`).
 
 ## Reproduce the training (NVIDIA GPU)
 
@@ -50,7 +50,7 @@ The individual steps:
 scripts/eval.sh base base                                   # baseline -> runs/spark-base-*.jsonl
 PROMPTS=300 LR=5e-5 SEED=20 scripts/rl.sh base budget "600 400 300"
 scripts/prose_pass.sh adapters/budget-3 runs/budget-3-samples.jsonl flint-terse
-PROMPTS=400 LR=2e-5 SEED=40 scripts/rl.sh adapters/flint-terse minimal "300 300"
+PROMPTS=400 LR=2e-5 SEED=40 EXPERT_RANK=8 scripts/rl.sh adapters/flint-terse minimal "300 300"
 scripts/eval.sh adapters/flint-terse flint-terse [SEED]     # compare with the base run
 ```
 
@@ -69,7 +69,7 @@ The LoRA is rank 32, FP32, on attention q/k/v/o, the shared expert and the two d
    - Rewards are centred per group and scaled by the batch standard deviation, then trained with policy gradient over the whole completion. Terse prose rows are replayed with KL holding replies to the base.
    - Budgets go 600 → 400 → 300 tokens.
 2. **Prose pass** (`scripts/prose_pass.sh`): one supervised epoch adds terse thinking for prose and chat, from the base's own compressed notes (`gen_corpus.py`). It also replays the adapter's own shortest correct code answers so code holds. This gives **flint-terse**.
-3. **Fixed-budget RL**: two more 300-token iterations with 400 prompts each give **flint-terse-minimalist**.
+3. **Per-expert LoRA and fixed-budget RL**: this step adds rank-8 LoRA on the routed experts' down-projections in the last 16 MoE layers. Two more 300-token iterations with 400 prompts each then give **flint-terse-minimalist**. The GGUF is 339 MB (FP32 base LoRA plus FP16 expert factors). Without the expert LoRA, the same recipe reached only 93.3 on code (rows 21–22).
 
 ## What limits code compression
 
@@ -79,7 +79,9 @@ The base itself needs its reasoning on code. With thinking cut off at a fixed le
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Code (110 tasks) | 81 | 90 | 92 | 102 | 102 |
 
-Every adapter lies on the same accuracy/terseness curve for code. Math, prose and chat compress 80–90% with no loss. Code keeps base accuracy down to about 60% less thinking, and loses tasks steadily beyond that. Given the first 25–50% of the base's own reasoning, terse adapters solve 92–94 of 95 base-solved tasks, but they then continue verbosely: the accuracy comes from the length.
+Without expert adaptation, every adapter lay on the same accuracy/terseness curve for code (rows 1–29). Math, prose and chat compress 80–90% with no loss. Code kept base accuracy down to about 60% less thinking and lost tasks steadily beyond that. Given the first 25–50% of the base's own reasoning, terse adapters solve 92–94 of 95 base-solved tasks, but they then continue verbosely.
+
+Adding LoRA on the routed experts (rows 30–31) moved off that curve: about 98/110 at 81% less code thinking, against about 93 for the same recipe without it. The gap to the base at that compression is about 4 tasks.
 
 ## What was tried
 
@@ -109,16 +111,16 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 19 | Exact mix 0.7·flint-terse + 0.3·#18 | 95 | 108 | 68% | 85% | 84% | |
 | 20 | Exact mix 0.5·flint-terse + 0.5·#18 | 91 | 105 | 77% | 86% | 85% | |
 | 21 | flint-terse + fixed-budget RL B=300, iteration 1 | 93 | 109 | 78% | 86% | 87% | |
-| 22 | **iteration 2 = flint-terse-minimalist** | **97** | **107** | 84% | 86% | 89% | three seeds: code 97 / 94 / 89 |
+| 22 | iteration 2 (the first minimalist) | 97 | 107 | 84% | 86% | 89% | three seeds: code 97 / 94 / 89 |
 | 23 | iteration 3 | 89 | 104 | 81% | 86% | 88% | oscillates |
 | 24 | #22 + prose pass on its shortest answers | 90 | 106 | 92% | 88% | 86% | overshoots |
 | 25 | On-policy mini-batch GRPO from flint-terse, B=250, step 4 (100 prompts × 8 per step) | 91 | 108 | 87% | 90% | — | |
 | 26 | same, step 8 | 88 | 111 | 85% | 88% | — | no recovery at this terseness |
 | 27 | flint-terse + RL with a per-task relative budget (thinking ≤ 30% of the base's own length on that task, floor 64) | 80 | 103 | 94% | 93% | 91% | overshoots hardest; stopped after one iteration |
-| 28 | Exact mix 0.6·flint-terse + 0.4·minimalist (three seeds) | 97 / 96 / 98 | 109 / 109 / 105 | 70% | 84% | — | code mean 97.0 |
-| 29 | Exact mix 0.4·flint-terse + 0.6·minimalist, rank 64 and its rank-32 SVD refit (six runs) | 94 / 97 / 101 / 96 / 96 / 91 | 105 / 109 / 105 / 108 / 108 / 105 | 75% | 84% | 85% | code mean 95.8; direct 82%, explanations 91% cut |
+| 28 | Exact mix 0.6·flint-terse + 0.4·#22 (three seeds) | 97 / 96 / 98 | 109 / 109 / 105 | 70% | 84% | — | code mean 97.0 |
+| 29 | Exact mix 0.4·flint-terse + 0.6·#22, rank 64 and its rank-32 SVD refit (six runs) | 94 / 97 / 101 / 96 / 96 / 91 | 105 / 109 / 105 / 108 / 108 / 105 | 75% | 84% | 85% | code mean 95.8; direct 82%, explanations 91% cut |
 | 30 | flint-terse + **per-expert LoRA** (rank 8, down_proj, last 16 MoE layers) + fixed-budget RL B=300, iteration 1 | 89 | 110 | 83% | 87% | 86% | same recipe as #21, plus expert capacity |
-| 31 | **same, iteration 2** (three seeds) | **100 / 97 / 97** | 110 / 110 / 104 | 81% | 86% | 85% | **code mean 98.0 at 81% less code thinking**: off the earlier curve; direct 77%, explanations 91% cut |
+| 31 | **same, iteration 2 = flint-terse-minimalist** (three seeds) | **100 / 97 / 97** | 110 / 110 / 104 | 81% | 86% | 85% | **code mean 98.0 at 81% less code thinking**: off the earlier curve; direct 77%, explanations 91% cut |
 
 Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–31 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 

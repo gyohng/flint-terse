@@ -24,10 +24,18 @@
   "training": {
     "rank": 32,
     "alpha": 32.0,
-    "epochs": 1.0,
     "learning_rate": 2e-05,
-    "kl": 2.0
+    "kl": 2.0,
+    "epochs": 1.0,
+    "expert_rank": 8,
+    "expert_layers": 16
   },
-  "description": "flint-terse-minimalist: flint-terse plus two iterations of fixed-budget RL (B=300). 82-89% less thinking in every category; code ~9/110 below the base.",
-  "name": "flint-terse-minimalist"
+  "name": "flint-terse-minimalist",
+  "description": "flint-terse-minimalist: flint-terse plus per-expert LoRA (rank 8 on the routed experts' down_proj, last 16 MoE layers, FP16) and two iterations of fixed-budget RL (B=300). 77-91% less thinking in every category; code 98.0/110 vs base 102.3 (three seeds).",
+  "expert_lora": {
+    "rank": 8,
+    "layers": "last 16 MoE layers",
+    "target": "down_proj",
+    "dtype": "float16"
+  }
 }
