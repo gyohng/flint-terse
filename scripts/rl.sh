@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 PY=${PY:-python3}
 START=$1; OUT=$2; BUDGETS=$3
 PROMPTS=${PROMPTS:-300} GROUP=${GROUP:-8} LR=${LR:-5e-5} ACCUM=${ACCUM:-4} SEED=${SEED:-20} EVAL=${EVAL:-1}
+EXPERT=(); [ -n "${EXPERT_RANK:-}" ] && EXPERT=(--expert-rank "$EXPERT_RANK" --expert-layers "${EXPERT_LAYERS:-16}")
 GGUF=models/flint-int4-gguf/flint-int4-q4_1.gguf
 mkdir -p runs
 PREV=$START; it=0
@@ -36,7 +37,7 @@ for B in $BUDGETS; do
   pkill -x llama-server || true; sleep 4
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True "$PY" spark_train.py --data runs/$NAME-scored.jsonl \
     data/spark-replay-prose.jsonl "${RESUME[@]}" --output adapters/$NAME --epochs 1 --accumulate "$ACCUM" \
-    --pack 8192 --rank 32 --alpha 32 --learning-rate "$LR" --kl 2 --valid 16 --max-tokens 8192 > runs/train-$NAME.log 2>&1
+    --pack 8192 --rank 32 --alpha 32 --learning-rate "$LR" --kl 2 --valid 16 --max-tokens 8192 "${EXPERT[@]}" > runs/train-$NAME.log 2>&1
   "$PY" export_adapter.py --adapter adapters/$NAME --model "$GGUF" > /dev/null
   [ "$EVAL" = 1 ] && scripts/eval.sh adapters/$NAME $NAME | grep -E "^(set|math|code|code-prose|prose|direct|retention) "
   PREV=adapters/$NAME

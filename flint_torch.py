@@ -167,6 +167,19 @@ class SparseMoE(nn.Module):
         self.up_q = nn.Parameter(w.pop(p + "experts.up_q"), requires_grad=False)
         self.down_q = nn.Parameter(w.pop(p + "experts.down_q"), requires_grad=False)
         self.shared_expert = DenseMLP(w, p + "shared_expert.")
+        self.down_a = self.down_b = None  # optional per-expert LoRA on down_proj: [E, r, I], [E, H, r]
+        self.expert_scale = 0.0
+        self.expert_enabled = True
+
+    def add_expert_lora(self, rank, scale):
+        n, hidden, inter = self.down_q.shape[0], self.down_q.shape[1], self.gate_q.shape[1]
+        dev = self.router.device
+        self.down_a = nn.Parameter(torch.randn(n, rank, inter, device=dev) / math.sqrt(inter))
+        self.down_b = nn.Parameter(torch.zeros(n, hidden, rank, device=dev))
+        self.expert_scale = scale
+
+    def _expert_lora(self):
+        return self.down_a is not None and self.expert_enabled
 
     def forward(self, x):
         shape = x.shape
@@ -189,12 +202,19 @@ class SparseMoE(nn.Module):
             h = F.silu(torch._grouped_mm(xs, gate.transpose(1, 2), offs=offs)) * \
                 torch._grouped_mm(xs, up.transpose(1, 2), offs=offs)
             y = torch._grouped_mm(h, down.transpose(1, 2), offs=offs)
+            if self._expert_lora():
+                t = torch._grouped_mm(h, self.down_a.to(h.dtype).transpose(1, 2), offs=offs)
+                y = y + self.expert_scale * torch._grouped_mm(t, self.down_b.to(h.dtype).transpose(1, 2), offs=offs)
         else:
             # Decode: only the few routed experts.
             ys = []
             for j, e in enumerate(flat[order].tolist()):
                 g, u, d = (dequant(q[e]) for q in (self.gate_q, self.up_q, self.down_q))
-                ys.append(F.linear(F.silu(F.linear(xs[j:j + 1], g)) * F.linear(xs[j:j + 1], u), d))
+                hj = F.silu(F.linear(xs[j:j + 1], g)) * F.linear(xs[j:j + 1], u)
+                yj = F.linear(hj, d)
+                if self._expert_lora():
+                    yj = yj + self.expert_scale * F.linear(F.linear(hj.float(), self.down_a[e]), self.down_b[e]).to(yj.dtype)
+                ys.append(yj)
             y = torch.cat(ys)
         out = out.index_add(0, token, y * wflat[:, None])
         return out.view(shape)
@@ -260,16 +280,45 @@ class Flint(nn.Module):
     def set_lora(self, enabled):
         for _, proj in self.projections():
             proj.enabled = enabled
+        for _, moe in self.moe_layers():
+            moe.expert_enabled = enabled
+
+    def moe_layers(self):
+        for i, layer in enumerate(self.layers):
+            if isinstance(layer.mlp, SparseMoE):
+                yield i, layer.mlp
+
+    def add_expert_lora(self, rank, scale, last):
+        """Per-expert LoRA on down_proj in the last `last` MoE layers."""
+        layers = list(self.moe_layers())[-last:] if last else []
+        for _, moe in layers:
+            moe.add_expert_lora(rank, scale)
+        return [p for p in self.parameters() if p.requires_grad]
 
     def lora_state(self):
-        """FP32 factors in MLX layout (lora_a [in, r], lora_b [r, out]) as export_adapter.py expects."""
-        return {k: v for name, proj in self.projections() if proj.lora_a is not None
-                for k, v in ((name + ".lora_a", proj.lora_a.detach().T.contiguous().cpu()),
-                             (name + ".lora_b", proj.lora_b.detach().T.contiguous().cpu()))}
+        """FP32 factors in MLX layout (lora_a [in, r], lora_b [r, out]; experts [E, in, r], [E, r, out]) as
+        export_adapter.py expects. Expert factors carry their own scale folded into lora_b."""
+        state = {k: v for name, proj in self.projections() if proj.lora_a is not None
+                 for k, v in ((name + ".lora_a", proj.lora_a.detach().T.contiguous().cpu()),
+                              (name + ".lora_b", proj.lora_b.detach().T.contiguous().cpu()))}
+        for i, moe in self.moe_layers():
+            if moe.down_a is not None:
+                name = f"model.layers.{i}.mlp.experts.down_proj"
+                state[name + ".lora_a"] = moe.down_a.detach().transpose(1, 2).contiguous().cpu()
+                state[name + ".lora_b"] = (moe.down_b.detach() * moe.expert_scale).transpose(1, 2).contiguous().cpu()
+        return state
 
     def load_lora(self, state, scale):
         projs = dict(self.projections())
+        moes = dict(self.moe_layers())
         for key in {k.rsplit(".", 1)[0] for k in state}:
+            if ".mlp.experts." in key:  # expert scale is folded into lora_b
+                moe = moes[int(key.split(".")[2])]
+                dev = moe.router.device
+                moe.down_a = nn.Parameter(state[key + ".lora_a"].transpose(1, 2).contiguous().to(dev, torch.float32))
+                moe.down_b = nn.Parameter(state[key + ".lora_b"].transpose(1, 2).contiguous().to(dev, torch.float32))
+                moe.expert_scale = 1.0
+                continue
             proj = projs[key]
             dev = proj.weight.device
             proj.lora_a = nn.Parameter(state[key + ".lora_a"].T.contiguous().to(dev, torch.float32))

@@ -141,6 +141,8 @@ def main():
     p.add_argument("--rank", type=int, default=32)
     p.add_argument("--alpha", type=float, default=32.0, help="LoRA scale = alpha / rank")
     p.add_argument("--targets", nargs="+", default=list(flint_torch.ATTN + flint_torch.MLP))
+    p.add_argument("--expert-rank", type=int, default=0, help="Per-expert LoRA rank on down_proj (multiple of 8)")
+    p.add_argument("--expert-layers", type=int, default=16, help="Apply expert LoRA to the last N MoE layers")
     p.add_argument("--epochs", type=float, default=2.0)
     p.add_argument("--pack", type=int, default=8192, help="Tokens per packed sequence")
     p.add_argument("--accumulate", type=int, default=1, help="Packed sequences per optimizer update")
@@ -174,6 +176,8 @@ def main():
     if args.resume:
         model.load_lora(load_file(Path(args.resume) / "adapters.safetensors"), scale)
         params = [q for q in model.parameters() if q.requires_grad]
+    if args.expert_rank and not any(m.down_a is not None for _, m in model.moe_layers()):
+        params = model.add_expert_lora(args.expert_rank, 1.0, args.expert_layers)
     print(f"LoRA rank {args.rank} on {args.targets}: {sum(q.numel() for q in params) / 1e6:.1f}M params", flush=True)
 
     def batches(rows):

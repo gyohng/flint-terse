@@ -61,7 +61,7 @@ Everything trains against the int4 GGUF coefficients that LM Studio runs. Transf
 - A small CUDA kernel dequantizes them bit-exactly (`q4_kernels.py`), and they run as grouped GEMMs.
 - Attention handles learned sinks, the 513-token sliding window and packed sequences.
 
-The LoRA is rank 32, FP32, on attention q/k/v/o, the shared expert and the two dense MLPs. These are all tensors llama.cpp applies adapters to; per-expert LoRA would be far too large. Sampling and evaluation use a CUDA llama.cpp server with the GGUF adapter applied (`scripts/serve.sh`, `spark_eval.py`).
+The LoRA is rank 32, FP32, on attention q/k/v/o, the shared expert and the two dense MLPs. These are all tensors llama.cpp applies adapters to. Optionally, `--expert-rank 8 --expert-layers 16` adds per-expert LoRA on the routed experts' down-projections in the last 16 MoE layers. It is stored as FP16 three-dimensional GGUF tensors, about 170 MB, and llama.cpp applies it through its expert LoRA path. Rows 30–31 show it moves code accuracy off the earlier trade-off curve. Sampling and evaluation use a CUDA llama.cpp server with the GGUF adapter applied (`scripts/serve.sh`, `spark_eval.py`).
 
 1. **Budget RL from the base** (`rl_sample.py`, `rescore_rl.py`, `scripts/rl.sh`):
    - Each iteration samples 8 answers for each of 300 code prompts (MBPP-derived, evaluation tasks excluded).
@@ -117,8 +117,10 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 27 | flint-terse + RL with a per-task relative budget (thinking ≤ 30% of the base's own length on that task, floor 64) | 80 | 103 | 94% | 93% | 91% | overshoots hardest; stopped after one iteration |
 | 28 | Exact mix 0.6·flint-terse + 0.4·minimalist (three seeds) | 97 / 96 / 98 | 109 / 109 / 105 | 70% | 84% | — | code mean 97.0 |
 | 29 | Exact mix 0.4·flint-terse + 0.6·minimalist, rank 64 and its rank-32 SVD refit (six runs) | 94 / 97 / 101 / 96 / 96 / 91 | 105 / 109 / 105 / 108 / 108 / 105 | 75% | 84% | 85% | code mean 95.8; direct 82%, explanations 91% cut |
+| 30 | flint-terse + **per-expert LoRA** (rank 8, down_proj, last 16 MoE layers) + fixed-budget RL B=300, iteration 1 | 89 | 110 | 83% | 87% | 86% | same recipe as #21, plus expert capacity |
+| 31 | **same, iteration 2** (three seeds) | **100 / 97 / 97** | 110 / 110 / 104 | 81% | 86% | 85% | **code mean 98.0 at 81% less code thinking**: off the earlier curve; direct 77%, explanations 91% cut |
 
-Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–29 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
+Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–31 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
 ## Repository
 

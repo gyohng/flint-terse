@@ -35,17 +35,27 @@ def main(argv=None):
     writer = gguf.GGUFWriter(output, "flint")
     writer.add_type(gguf.GGUFType.ADAPTER)
     writer.add_string(gguf.Keys.Adapter.TYPE, "lora")
-    writer.add_float32(gguf.Keys.Adapter.LORA_ALPHA, rank * config["lora_parameters"]["scale"])
+    writer.add_float32(gguf.Keys.Adapter.LORA_ALPHA, rank * config["lora_parameters"]["scale"])  # = alpha
+    alpha = rank * config["lora_parameters"]["scale"]
     expected = {}
     for prefix in sorted({name.rsplit('.', 1)[0] for name in weights}):
         a, b = (weights[prefix + '.' + key] for key in ('lora_a', 'lora_b'))
+        mapped = names.get_name(prefix + '.weight', try_suffixes=('.weight',))
+        if mapped is None:
+            p.error(f'Unsupported adapter projection: {prefix}')
+        if a.ndim == 3:
+            # Per-expert factors [E, in, r] / [E, r, out] with their scale already in lora_b. llama.cpp scales
+            # every tensor by alpha / its own rank, so undo that here; FP16 keeps the expert part small.
+            r = a.shape[-1]
+            if a.dtype != np.float32 or b.dtype != np.float32 or b.ndim != 3 or b.shape[1] != r:
+                p.error(f'{prefix}: expected FP32 expert factors [E, in, r] and [E, r, out]')
+            expected[mapped + '.lora_a'] = np.ascontiguousarray(np.swapaxes(a, 1, 2)).astype(np.float16)
+            expected[mapped + '.lora_b'] = np.ascontiguousarray(np.swapaxes(b, 1, 2) * (r / alpha)).astype(np.float16)
+            continue
         if a.dtype != np.float32 or b.dtype != np.float32 or a.ndim != 2 or b.ndim != 2:
             p.error(f'{prefix}: expected the original FP32 matrices')
         if a.shape[1] != rank or b.shape[0] != rank:
             p.error(f'{prefix}: adapter rank differs from its configuration')
-        mapped = names.get_name(prefix + '.weight', try_suffixes=('.weight',))
-        if mapped is None:
-            p.error(f'Unsupported adapter projection: {prefix}')
         expected[mapped + '.lora_a'] = np.ascontiguousarray(a if prefix == 'model.embed_tokens' else a.T)
         expected[mapped + '.lora_b'] = np.ascontiguousarray(b.T)
     for name, value in expected.items():
