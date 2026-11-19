@@ -1,6 +1,8 @@
-"""Package a trained adapter for Hugging Face: GGUF LoRA (llama.cpp / LM Studio) and MLX LoRA (mlx-lm).
+"""Package a trained adapter for Hugging Face as two repositories: NAME (GGUF LoRA for llama.cpp and
+LM Studio) and NAME-mlx (MLX LoRA for mlx-lm), each with Flint's licence and a model card filled from
+scripts/model_card_gguf.md / scripts/model_card_mlx.md.
 
-  python3 scripts/package_hf.py adapters/spark-final flint-terse out/flint-terse
+  python3 scripts/package_hf.py adapters/spark-final flint-terse out --title "Flint Terse"
 
 MLX conversion: same key names (mlx-lm module paths), lora_a [in, r] / lora_b [r, out]; per-expert factors
 become mlp.switch_mlp.down_proj with [E, r, in] / [E, out, r], zero-padded to the adapter's main rank because
@@ -47,24 +49,43 @@ def mlx_adapter(src, dst):
     return keys
 
 
+def fill(template, values):
+    text = Path(template).read_text()
+    for key, value in values.items():
+        text = text.replace("{" + key + "}", value)
+    return text
+
+
+def size(path):
+    total = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) if Path(path).is_dir() else Path(path).stat().st_size
+    return f"{round(total / 1e6)} MB"
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("adapter", type=Path, help="Trained adapter directory (adapters.safetensors, adapter.gguf)")
     p.add_argument("name")
-    p.add_argument("output", type=Path)
-    p.add_argument("--readme", type=Path, help="Model card to copy as README.md")
+    p.add_argument("output", type=Path, help="Parent directory for NAME/ and NAME-mlx/")
+    p.add_argument("--title", required=True)
+    p.add_argument("--user", default="gyohng")
+    p.add_argument("--summary", default="", help="Markdown paragraph for both cards")
+    p.add_argument("--gguf-note", default="", help="Extra usage note for the GGUF card")
+    p.add_argument("--mlx-note", default="", help="Extra usage note for the MLX card")
     args = p.parse_args()
-    out = args.output
-    if out.exists():
-        p.error(f"{out} exists")
-    out.mkdir(parents=True)
-    shutil.copy(args.adapter / "adapter.gguf", out / f"{args.name}.gguf")
-    shutil.copy(args.adapter / "chat_template.jinja", out / "chat_template.jinja")
-    shutil.copy("models/flint/LICENSE", out / "LICENSE")
-    keys = mlx_adapter(args.adapter, out / "mlx")
-    if args.readme:
-        shutil.copy(args.readme, out / "README.md")
-    print(f"{out}: {args.name}.gguf, mlx/ ({len(keys)} module types), chat_template.jinja, LICENSE")
+    gguf, mlx = args.output / args.name, args.output / f"{args.name}-mlx"
+    for d in (gguf, mlx):
+        if d.exists():
+            p.error(f"{d} exists")
+        d.mkdir(parents=True)
+        shutil.copy("models/flint/LICENSE", d / "LICENSE")
+    shutil.copy(args.adapter / "adapter.gguf", gguf / f"{args.name}.gguf")
+    shutil.copy(args.adapter / "chat_template.jinja", gguf / "chat_template.jinja")
+    mlx_adapter(args.adapter, mlx)
+    values = dict(TITLE=args.title, NAME=args.name, USER=args.user, SUMMARY=args.summary,
+                  GGUF_SIZE=size(gguf / f"{args.name}.gguf"), MLX_SIZE=size(mlx / "adapters.safetensors"))
+    (gguf / "README.md").write_text(fill("scripts/model_card_gguf.md", values | {"EXTRA": args.gguf_note}))
+    (mlx / "README.md").write_text(fill("scripts/model_card_mlx.md", values | {"EXTRA": args.mlx_note}))
+    print(f"{gguf} ({values['GGUF_SIZE']}), {mlx} ({values['MLX_SIZE']})")
 
 
 if __name__ == "__main__":

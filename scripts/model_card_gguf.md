@@ -1,15 +1,13 @@
 ---
 license: apache-2.0
-base_model:
-- RecursiveSI/flint-int4-gguf
-- RecursiveSI/flint-int4
+base_model: RecursiveSI/flint-int4-gguf
 base_model_relation: adapter
-library_name: mlx
 pipeline_tag: text-generation
 tags:
 - lora
 - gguf
-- mlx
+- llama.cpp
+- lm-studio
 - flint
 - reasoning
 - code
@@ -17,7 +15,7 @@ tags:
 
 # {TITLE}
 
-A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. It applies on top of the unchanged int4 base in two formats: GGUF for llama.cpp and LM Studio, and MLX for mlx-lm.
+A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the GGUF LoRA for llama.cpp and LM Studio, applied on top of the unchanged int4 GGUF base. The MLX version is [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
 
 ```
 "Hi!"   base:   123 thinking tokens  ("The user has just said "Hi!" — a simple greeting. ...")
@@ -43,16 +41,13 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 | File | Use |
 | --- | --- |
 | `{NAME}.gguf` | GGUF LoRA for llama.cpp and LM Studio ({GGUF_SIZE}) |
-| `mlx/` | MLX LoRA for mlx-lm (`adapters.safetensors`, `adapter_config.json`; {MLX_SIZE}) |
 | `chat_template.jinja` | Flint's chat template without its `replace("\x00", "")`, which LM Studio's template engine does not support |
 
 ## Base model
 
 Use the exact base the adapter was trained on.
 
-- **GGUF:** [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), file `flint-int4-q4_1.gguf`, revision `9c47151036bc2c34331142dda04488bceab2bc9f`, SHA-256 `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`.
-- **MLX:** [`RecursiveSI/flint-int4`](https://huggingface.co/RecursiveSI/flint-int4), the MLX export of the same int4 integer codes.
-
+[`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), file `flint-int4-q4_1.gguf`, revision `9c47151036bc2c34331142dda04488bceab2bc9f`, SHA-256 `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`.
 Other quantizations are different checkpoints and are not supported.
 
 ## Usage
@@ -75,13 +70,7 @@ llama-server -m flint-int4-q4_1.gguf --lora {NAME}/{NAME}.gguf \
   --jinja --chat-template-file {NAME}/chat_template.jinja --temp 1 --top-p 0.95 --top-k 20
 ```
 
-**MLX (mlx-lm):**
-
-```sh
-hf download {USER}/{NAME} --include "mlx/*" --local-dir {NAME}
-mlx_lm.generate --model RecursiveSI/flint-int4 --adapter-path {NAME}/mlx \
-  --temp 1 --top-p 0.95 --top-k 20 --max-tokens 4096 --prompt "Write a function that merges overlapping intervals."
-```
+**MLX:** see [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
 
 Recommended sampling is temperature 1, top-p 0.95 and top-k 20, the base model's defaults.
 {EXTRA}
