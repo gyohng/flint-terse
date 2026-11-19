@@ -21,17 +21,19 @@ Both adapters need the exact base: [`RecursiveSI/flint-int4-gguf`](https://huggi
 
 ## Use in LM Studio (Mac)
 
-Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command. Download the adapter's GGUF from Hugging Face into its `release/<name>/` directory as `adapter.gguf` (`hf download gyohng/flint-terse flint-terse.gguf`), then:
+Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command.
 
 ```sh
 ./run.sh deploy                                         # flint-terse
 ./run.sh deploy --adapter release/flint-terse-minimalist
-./run.sh deploy --context 131072                        # longer context
+./run.sh deploy --context 131072                        # longer context (base supports 262,144)
 ```
 
-`deploy` finds or downloads the exact base, imports it, loads it with the adapter as `flint-terse` and installs the tested sampling preset (temperature 1, top-p .95, top-k 20). The Jinja override only removes the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Rerun `deploy` after unloading or restarting.
+`deploy` finds or downloads the exact base and the adapter GGUF from Hugging Face. It imports the base, loads it with the adapter attached through LM Studio's llama.cpp arguments as `flint-terse`, and installs the tested sampling preset (temperature 1, top-p .95, top-k 20). The Jinja override only removes the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Rerun `deploy` after unloading or restarting.
 
-The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. flint-terse-minimalist also uses llama.cpp's per-expert LoRA path. It is verified there but untested in LM Studio's bundled llama.cpp. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`).
+LM Studio has no in-app LoRA support. If you download an adapter repository through LM Studio, its `.gguf` appears in the model list, but it is an adapter, not a model. Loading it alone fails with `key not found in model: flint.context_length`. LM Studio's MLX engine has no adapter support either; the MLX repositories are for mlx-lm.
+
+The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`). flint-terse-minimalist also uses llama.cpp's per-expert LoRA path. It is verified there but untested in LM Studio's bundled llama.cpp.
 
 ## Reproduce the training (NVIDIA GPU)
 

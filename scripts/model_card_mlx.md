@@ -47,6 +47,9 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 
 ## Usage
 
+These adapters are for mlx-lm. LM Studio's MLX engine does not support LoRA adapters, so for LM Studio use the GGUF version through its loader.
+
+
 ```sh
 hf download {USER}/{NAME}-mlx --local-dir {NAME}-mlx
 mlx_lm.generate --model RecursiveSI/flint-int4 --adapter-path {NAME}-mlx \

@@ -52,12 +52,12 @@ Other quantizations are different checkpoints and are not supported.
 
 ## Usage
 
-**LM Studio (Mac):** the [GitHub repository](https://github.com/gyohng/flint-terse) has a one-command loader. It finds or downloads the base and loads it with the adapter and the recommended sampling preset:
+**This is an adapter, not a model.** LM Studio lists `{NAME}.gguf` after downloading it, but cannot load it on its own: it fails with `key not found in model: flint.context_length`, and its context may show as 2048. LM Studio has no in-app LoRA support, so the adapter has to be attached to the Flint base when the base is loaded.
+
+**LM Studio (Mac):** the [GitHub repository](https://github.com/gyohng/flint-terse) has a one-command loader. It downloads the exact base and this adapter if missing, loads the base with the adapter through LM Studio's llama.cpp arguments, and installs the recommended sampling preset. The model appears in LM Studio as `flint-terse`, with 64K context by default (`--context 131072` for more; the base supports up to 262,144):
 
 ```sh
 git clone https://github.com/gyohng/flint-terse && cd flint-terse
-hf download {USER}/{NAME} {NAME}.gguf --local-dir /tmp/{NAME}
-cp /tmp/{NAME}/{NAME}.gguf release/{NAME}/adapter.gguf
 ./run.sh deploy --adapter release/{NAME}
 ```
 
