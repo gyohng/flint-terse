@@ -125,8 +125,9 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 33 | same, iteration 2 (three seeds) | 97 / 94 / 96 | 109 / 107 / 106 | 67% | 84% | 88% | code mean 95.7 |
 | 34 | flint-terse recipe with per-expert LoRA from the start: budget RL 600 → 400 → 300 | 103 → 100 → 93 | 109 → 108 → 110 | 24 → 38 → 81% | 60 → 70 → 86% | | at lr 5e-5 iteration 2 collapsed (math 16/120, 99 delimiter leaks); rerun from iteration 1 at 2e-5 |
 | 35 | #34 + prose pass (three seeds) | 97 / 99 / 98 | 106 / 109 / 106 | 66% | 80% | 74% | code mean 98.0: no better than flint-terse-minimalist at less compression |
+| 36 | flint-terse-minimalist + prose pass on its own shortest correct answers | 87 | 109 | 95% | 90% | 88% | overshoots, as #24 did |
 
-Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–35 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
+Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–36 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
 ## Repository
 
