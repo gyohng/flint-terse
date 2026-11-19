@@ -12,16 +12,16 @@ LoRA adapters that make [Recursive Flint](https://huggingface.co/RecursiveSI/fli
 | Adapter | Use it for | Code (110 tasks) | Math (120) | Thinking cut: code / math / prose |
 | --- | --- | ---: | ---: | --- |
 | unchanged base | | 102.3 | 103.3 | — |
-| **flint-terse** | coding, with the base's accuracy | **102.7** | **109.7** | 62% / 79% / 85% |
-| **flint-terse-minimalist** | the least thinking | 98.0 | 108.0 | 81% / 86% / 85% |
+| [**flint-terse**](https://huggingface.co/gyohng/flint-terse) | coding, with the base's accuracy | **102.7** | **109.7** | 62% / 79% / 85% |
+| [**flint-terse-minimalist**](https://huggingface.co/gyohng/flint-terse-minimalist) | the least thinking | 98.0 | 108.0 | 81% / 86% / 85% |
 
-Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. Adapter weights will be published on Hugging Face; `release/<name>/` holds each adapter's configuration, the exact base it requires and the chat template.
+Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. The adapters are on Hugging Face in GGUF and MLX formats: [gyohng/flint-terse](https://huggingface.co/gyohng/flint-terse) and [gyohng/flint-terse-minimalist](https://huggingface.co/gyohng/flint-terse-minimalist). `release/<name>/` holds each adapter's configuration, the exact base it requires and the chat template; `scripts/package_hf.py` builds the Hugging Face packages.
 
 Both adapters need the exact base: [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), file `flint-int4-q4_1.gguf`, revision `9c47151036bc2c34331142dda04488bceab2bc9f`, SHA-256 `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`. A different quantization is a different checkpoint.
 
 ## Use in LM Studio (Mac)
 
-Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command. Put the adapter's `adapter.gguf` into its `release/<name>/` directory, then:
+Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command. Download the adapter's GGUF from Hugging Face into its `release/<name>/` directory as `adapter.gguf` (`hf download gyohng/flint-terse flint-terse.gguf`), then:
 
 ```sh
 ./run.sh deploy                                         # flint-terse
