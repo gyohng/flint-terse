@@ -1,6 +1,7 @@
 """Package a trained adapter for Hugging Face as three repositories: NAME (the adapter merged into the
-int4 GGUF, for LM Studio), NAME-lora (GGUF LoRA for llama.cpp) and NAME-mlx (MLX LoRA for mlx-lm), each
-with Flint's licence and a model card filled from scripts/model_card_{merged,gguf,mlx}.md.
+int4 GGUF), NAME-mlx (merged into the MLX int4 base, scripts/merge_mlx.py) and NAME-lora (the unmerged
+GGUF LoRA, plus the MLX LoRA in mlx/), each with Flint's licence and a model card filled from
+scripts/model_card_{merged,mlx,gguf}.md. The merged repositories are what LM Studio can load.
 
   llama-export-lora -m flint-int4-q4_1.gguf --lora adapters/spark-final/adapter.gguf -o merged.gguf
   python3 gguf-py/gguf/scripts/gguf_new_metadata.py merged.gguf flint-terse.gguf \
@@ -20,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 from safetensors.numpy import load_file, save_file
+
+import merge_mlx
 
 KEYS = ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj",
         "mlp.gate_proj", "mlp.up_proj", "mlp.down_proj",
@@ -62,22 +65,24 @@ def fill(template, values):
 
 def size(path):
     total = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) if Path(path).is_dir() else Path(path).stat().st_size
-    return f"{round(total / 1e6)} MB"
+    return f"{total / 1e9:.1f} GB" if total >= 1e9 else f"{round(total / 1e6)} MB"
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("adapter", type=Path, help="Trained adapter directory (adapters.safetensors, adapter.gguf)")
     p.add_argument("name")
-    p.add_argument("output", type=Path, help="Parent directory for NAME/ and NAME-mlx/")
+    p.add_argument("output", type=Path, help="Parent directory for NAME/, NAME-mlx/ and NAME-lora/")
     p.add_argument("--title", required=True)
     p.add_argument("--user", default="gyohng")
     p.add_argument("--summary", default="", help="Markdown paragraph for both cards")
-    p.add_argument("--gguf-note", default="", help="Extra usage note for the GGUF card")
-    p.add_argument("--mlx-note", default="", help="Extra usage note for the MLX card")
+    p.add_argument("--gguf-note", default="", help="Extra note on the GGUF LoRA for the -lora card")
+    p.add_argument("--mlx-note", default="", help="Extra note on the MLX LoRA for the -lora card")
     p.add_argument("--merged", type=Path, required=True, help="Merged GGUF (see above)")
-    p.add_argument("--merged-note", default="The LoRA-adapted tensors are stored as F16.",
-                   help="Sentence on which tensors the merge rewrote")
+    p.add_argument("--mlx-base", type=Path, default=Path("models/flint-int4-mlx"), help="MLX int4 base (RecursiveSI/flint-int4)")
+    p.add_argument("--merged-tensors", default="attention q/k/v/o, the shared expert and the two dense MLPs",
+                   help="Which tensors the merge rewrote, for the cards")
+    p.add_argument("--mlx-check", default="The merge was verified against llama.cpp running the GGUF adapter on the int4 GGUF: mean |Δlogp| 0.010 and 100% top-token agreement.", help="Measured agreement of merged MLX with base plus adapter")
     p.add_argument("--expert-clause", default="", help="Appended to the card's LoRA description")
     args = p.parse_args()
     merged, gguf, mlx = (args.output / f"{args.name}{s}" for s in ("", "-lora", "-mlx"))
@@ -92,14 +97,15 @@ def main():
         os.link(args.merged, merged / f"{args.name}.gguf")   # tens of GB: hard-link when on the same disk
     except OSError:
         shutil.copy(args.merged, merged / f"{args.name}.gguf")
-    mlx_adapter(args.adapter, mlx)
+    mlx_adapter(args.adapter, gguf / "mlx")
+    merge_mlx.merge(args.mlx_base, gguf / "mlx", mlx, args.adapter / "chat_template.jinja")
     values = dict(TITLE=args.title, NAME=args.name, USER=args.user, SUMMARY=args.summary,
-                  GGUF_SIZE=size(gguf / f"{args.name}.gguf"), MLX_SIZE=size(mlx / "adapters.safetensors"),
-                  MERGED_SIZE=f"{args.merged.stat().st_size / 1e9:.1f} GB",
-                  MERGED_NOTE=args.merged_note, EXPERT_CLAUSE=args.expert_clause)
+                  GGUF_SIZE=size(gguf / f"{args.name}.gguf"), MLX_ADAPTER_SIZE=size(gguf / "mlx"),
+                  MLX_SIZE=size(mlx), MERGED_SIZE=size(args.merged),
+                  MERGED_TENSORS=args.merged_tensors, MLX_CHECK=args.mlx_check, EXPERT_CLAUSE=args.expert_clause)
     (merged / "README.md").write_text(fill("scripts/model_card_merged.md", values))
-    (gguf / "README.md").write_text(fill("scripts/model_card_gguf.md", values | {"EXTRA": args.gguf_note}))
-    (mlx / "README.md").write_text(fill("scripts/model_card_mlx.md", values | {"EXTRA": args.mlx_note}))
+    (gguf / "README.md").write_text(fill("scripts/model_card_gguf.md", values | {"EXTRA": args.gguf_note + args.mlx_note}))
+    (mlx / "README.md").write_text(fill("scripts/model_card_mlx.md", values))
     print(f"{merged} ({values['MERGED_SIZE']}), {gguf} ({values['GGUF_SIZE']}), {mlx} ({values['MLX_SIZE']})")
 
 

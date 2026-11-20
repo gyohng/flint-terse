@@ -39,7 +39,7 @@ This merged GGUF measured code 99.0 (flint-terse: 95 / 102 / 100) and 94.7 (flin
 
 ## What this file is
 
-`{NAME}.gguf` ({MERGED_SIZE}) is the original [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf) `flint-int4-q4_1.gguf` with the LoRA merged in by llama.cpp's `llama-export-lora`. {MERGED_NOTE} Every other tensor is copied unchanged as Q4_1. The embedded chat template is Flint's, minus a `replace("\x00", "")` that LM Studio's template engine does not support. Context length is the base's 262,144 tokens.
+`{NAME}.gguf` ({MERGED_SIZE}) is the original [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf) `flint-int4-q4_1.gguf` with the LoRA merged in by llama.cpp's `llama-export-lora`, which rewrote {MERGED_TENSORS} as F16. Every other tensor is copied unchanged as Q4_1. The embedded chat template is Flint's, minus a `replace("\x00", "")` that LM Studio's template engine does not support. Context length is the base's 262,144 tokens.
 
 The unmerged adapter is also available: GGUF LoRA for llama.cpp at [{USER}/{NAME}-lora](https://huggingface.co/{USER}/{NAME}-lora), and MLX LoRA for mlx-lm at [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
 

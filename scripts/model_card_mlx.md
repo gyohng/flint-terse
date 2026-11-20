@@ -1,12 +1,12 @@
 ---
 license: apache-2.0
 base_model: RecursiveSI/flint-int4
-base_model_relation: adapter
+base_model_relation: finetune
 library_name: mlx
 pipeline_tag: text-generation
 tags:
-- lora
 - mlx
+- lm-studio
 - flint
 - reasoning
 - code
@@ -14,7 +14,7 @@ tags:
 
 # {TITLE} (MLX)
 
-A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the MLX LoRA for mlx-lm on Apple Silicon, applied on top of the unchanged MLX int4 base. The merged GGUF model for LM Studio and llama.cpp is [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}); the GGUF LoRA is [{USER}/{NAME}-lora](https://huggingface.co/{USER}/{NAME}-lora).
+[Recursive Flint](https://huggingface.co/RecursiveSI/flint), fine-tuned to think briefly and in shorthand inside `<think>` while keeping its final answers. This is a complete MLX model for Apple Silicon: download it in LM Studio or load it with mlx-lm, with nothing else to install. The GGUF version is [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}).
 
 ```
 "Hi!"   base:   123 thinking tokens  ("The user has just said "Hi!" — a simple greeting. ...")
@@ -25,7 +25,7 @@ A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) t
 
 ## Results
 
-Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three seeds with one sample per task (temperature 1, top-p 0.95, top-k 20). The thinking reduction is relative to the base on the same tasks.
+Measured on the int4 base with the adapter in llama.cpp. Scores are the mean of three seeds with one sample per task (temperature 1, top-p 0.95, top-k 20). The thinking reduction is relative to the base on the same tasks.
 
 | | Code (110 tasks) | Math (120 tasks) | Less thinking: code | math | prose & chat |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -35,34 +35,27 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 
 **flint-terse** keeps the base's coding accuracy. **flint-terse-minimalist** thinks the least, at about 4 code tasks lower. Final replies stay complete, and no `<think>` tags leak into them.
 
-## Files
+## What this model is
 
-| File | Use |
-| --- | --- |
-| `adapters.safetensors`, `adapter_config.json` | MLX LoRA for mlx-lm ({MLX_SIZE}) |
+The MLX int4 base [`RecursiveSI/flint-int4`](https://huggingface.co/RecursiveSI/flint-int4) with the LoRA merged in ({MLX_SIZE}). The merge rewrote {MERGED_TENSORS}. They are stored unquantized as float16: re-quantizing them to 4 bits, as `mlx_lm.fuse` does, would round away most of the fine-tune, and bfloat16 would round away 5–18% of it. Every other tensor is the base's original int4. As with any mlx-lm LoRA, activations then run in float32. {MLX_CHECK} The chat template is Flint's, minus a `replace("\x00", "")` that LM Studio's template engine does not support.
 
-## Base model
-
-[`RecursiveSI/flint-int4`](https://huggingface.co/RecursiveSI/flint-int4), the MLX export of Flint int4. The adapter was trained on the same int4 integer codes, in their GGUF form. Other quantizations are different checkpoints and are not supported.
+The unmerged adapters (GGUF for llama.cpp, MLX for mlx-lm `--adapter-path`) are at [{USER}/{NAME}-lora](https://huggingface.co/{USER}/{NAME}-lora).
 
 ## Usage
 
-These adapters are for mlx-lm. LM Studio's MLX engine does not support LoRA adapters; for LM Studio, download the merged GGUF model [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}).
+**LM Studio:** search for `{USER}/{NAME}-mlx`, download, load. Set temperature 1, top-p 0.95 and top-k 20 (the base model's defaults).
 
+**mlx-lm:**
 
 ```sh
-hf download {USER}/{NAME}-mlx --local-dir {NAME}-mlx
-mlx_lm.generate --model RecursiveSI/flint-int4 --adapter-path {NAME}-mlx \
-  --temp 1 --top-p 0.95 --top-k 20 --max-tokens 4096 --prompt "Write a function that merges overlapping intervals."
-# or an OpenAI-compatible server:
-mlx_lm.server --model RecursiveSI/flint-int4 --adapter-path {NAME}-mlx
+mlx_lm.generate --model {USER}/{NAME}-mlx --temp 1 --top-p 0.95 --top-k 20 --max-tokens 4096 \
+  --prompt "Write a function that merges overlapping intervals."
+mlx_lm.server --model {USER}/{NAME}-mlx   # OpenAI-compatible server
 ```
 
-Recommended sampling is temperature 1, top-p 0.95 and top-k 20, the base model's defaults.
-{EXTRA}
 ## How it was made
 
-Training ran directly on the int4 coefficients with rank-32 FP32 LoRA on attention, the shared expert and the dense MLPs. The model learned from its own answers by reinforcement learning: an answer earned reward only if it passed its tests and fitted a shrinking thinking budget. A short supervised pass then taught terse thinking for prose and chat. Code, data and a one-script reproduction are at **https://github.com/gyohng/flint-terse**.
+Training ran directly on the int4 coefficients with rank-32 FP32 LoRA on attention, the shared expert and the dense MLPs{EXPERT_CLAUSE}. The model learned from its own answers by reinforcement learning: an answer earned reward only if it passed its tests and fitted a shrinking thinking budget. A short supervised pass then taught terse thinking for prose and chat. Code, data and a one-script reproduction are at **https://github.com/gyohng/flint-terse**.
 
 ## License
 

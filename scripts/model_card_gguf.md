@@ -15,7 +15,7 @@ tags:
 
 # {TITLE}
 
-A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the GGUF LoRA for llama.cpp, applied on top of the unchanged int4 GGUF base. **For LM Studio, download the merged model [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME})**: LM Studio cannot apply LoRA adapters, and this file alone will not load there. The MLX version is [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
+A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the unmerged adapters: a GGUF LoRA for llama.cpp over the unchanged int4 GGUF base, and an MLX LoRA for mlx-lm over the MLX int4 base. **For LM Studio, download a merged model instead: [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}) (GGUF) or [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx) (MLX)**. LM Studio cannot apply LoRA adapters, and these files alone will not load there.
 
 ```
 "Hi!"   base:   123 thinking tokens  ("The user has just said "Hi!" — a simple greeting. ...")
@@ -41,6 +41,7 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 | File | Use |
 | --- | --- |
 | `{NAME}.gguf` | GGUF LoRA for llama.cpp ({GGUF_SIZE}) |
+| `mlx/adapters.safetensors`, `mlx/adapter_config.json` | MLX LoRA for mlx-lm over [`RecursiveSI/flint-int4`](https://huggingface.co/RecursiveSI/flint-int4) ({MLX_ADAPTER_SIZE}) |
 | `chat_template.jinja` | Flint's chat template without its `replace("\x00", "")`, which LM Studio's template engine does not support |
 
 ## Base model
@@ -61,7 +62,13 @@ llama-server -m flint-int4-q4_1.gguf --lora {NAME}/{NAME}.gguf \
   --jinja --chat-template-file {NAME}/chat_template.jinja --temp 1 --top-p 0.95 --top-k 20
 ```
 
-**MLX:** see [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
+**mlx-lm:**
+
+```sh
+hf download {USER}/{NAME}-lora --include 'mlx/*' --local-dir {NAME}-lora
+mlx_lm.generate --model RecursiveSI/flint-int4 --adapter-path {NAME}-lora/mlx \
+  --temp 1 --top-p 0.95 --top-k 20 --max-tokens 4096 --prompt "Write a function that merges overlapping intervals."
+```
 
 LM Studio users can also attach this adapter to the base with the [GitHub repository](https://github.com/gyohng/flint-terse)'s `./run.sh deploy --adapter release/{NAME}`, but the merged model is simpler.
 
