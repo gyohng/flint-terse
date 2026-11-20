@@ -25,6 +25,9 @@ def main():
     p.add_argument("--rel-budget", type=float,
                    help="Relative truncation reward: budget = max(--budget-floor, R * the base's thinking length)")
     p.add_argument("--budget-floor", type=int, default=64)
+    p.add_argument("--soft-budget", type=int,
+                   help="Soft length reward (Kimi 1.5 / L1 style): correct * (1 - alpha * min(1, L / budget)), "
+                        "so a long correct answer still beats a wrong one on hard tasks")
     args = p.parse_args()
     ref = {}
     for path in args.ref_log:
@@ -41,6 +44,8 @@ def main():
         L, Lr = r["think_tokens"], ref.get(r["id"], args.default_ref)
         if args.rel_budget:
             r["reward"] = 1.0 if r["correct"] and L <= max(args.budget_floor, args.rel_budget * Lr) else 0.0
+        elif args.soft_budget:
+            r["reward"] = (1 - args.alpha * min(1.0, L / args.soft_budget)) if r["correct"] else 0.0
         elif args.budget:
             r["reward"] = 1.0 if r["correct"] and L <= args.budget else 0.0
         else:
