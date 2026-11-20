@@ -33,7 +33,7 @@ Measured on the int4 base with the adapter in llama.cpp. Scores are the mean of 
 | [flint-terse](https://huggingface.co/{USER}/flint-terse) | **102.7** | **109.7** | 62% | 79% | 85% |
 | [flint-terse-minimalist](https://huggingface.co/{USER}/flint-terse-minimalist) | 98.0 | 108.0 | **81%** | **86%** | 85% |
 
-This merged GGUF measured code 99.0 (flint-terse: 95 / 102 / 100) and 94.7 (flint-terse-minimalist: 96 / 97 / 91) at the same thinking reductions, about 3 code tasks below base plus adapter on the same seeds.
+The merged GGUF is the same network as base plus adapter: over 16K tokens of chat transcripts its mean KL divergence from base plus adapter is 0.003 with 98% the same top token, no more than base plus adapter differs from itself run with another batch size (llama.cpp `llama-perplexity --kl-divergence`).
 
 **flint-terse** keeps the base's coding accuracy. **flint-terse-minimalist** thinks the least, at about 4 code tasks lower. Final replies stay complete, and no `<think>` tags leak into them.
 
