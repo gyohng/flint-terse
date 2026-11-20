@@ -1,8 +1,11 @@
-"""Package a trained adapter for Hugging Face as two repositories: NAME (GGUF LoRA for llama.cpp and
-LM Studio) and NAME-mlx (MLX LoRA for mlx-lm), each with Flint's licence and a model card filled from
-scripts/model_card_gguf.md / scripts/model_card_mlx.md.
+"""Package a trained adapter for Hugging Face as three repositories: NAME (the adapter merged into the
+int4 GGUF, for LM Studio), NAME-lora (GGUF LoRA for llama.cpp) and NAME-mlx (MLX LoRA for mlx-lm), each
+with Flint's licence and a model card filled from scripts/model_card_{merged,gguf,mlx}.md.
 
-  python3 scripts/package_hf.py adapters/spark-final flint-terse out --title "Flint Terse"
+  llama-export-lora -m flint-int4-q4_1.gguf --lora adapters/spark-final/adapter.gguf -o merged.gguf
+  python3 gguf-py/gguf/scripts/gguf_new_metadata.py merged.gguf flint-terse.gguf \
+      --general-name "Flint Terse" --chat-template-file release/flint-terse/chat_template.jinja
+  python3 scripts/package_hf.py adapters/spark-final flint-terse out --title "Flint Terse" --merged flint-terse.gguf
 
 MLX conversion: same key names (mlx-lm module paths), lora_a [in, r] / lora_b [r, out]; per-expert factors
 become mlp.switch_mlp.down_proj with [E, r, in] / [E, out, r], zero-padded to the adapter's main rank because
@@ -11,6 +14,7 @@ mlx-lm uses one rank for every module (exact), stored as float16.
 
 import argparse
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -71,21 +75,32 @@ def main():
     p.add_argument("--summary", default="", help="Markdown paragraph for both cards")
     p.add_argument("--gguf-note", default="", help="Extra usage note for the GGUF card")
     p.add_argument("--mlx-note", default="", help="Extra usage note for the MLX card")
+    p.add_argument("--merged", type=Path, required=True, help="Merged GGUF (see above)")
+    p.add_argument("--merged-note", default="The LoRA-adapted tensors are stored as F16.",
+                   help="Sentence on which tensors the merge rewrote")
+    p.add_argument("--expert-clause", default="", help="Appended to the card's LoRA description")
     args = p.parse_args()
-    gguf, mlx = args.output / args.name, args.output / f"{args.name}-mlx"
-    for d in (gguf, mlx):
+    merged, gguf, mlx = (args.output / f"{args.name}{s}" for s in ("", "-lora", "-mlx"))
+    for d in (merged, gguf, mlx):
         if d.exists():
             p.error(f"{d} exists")
         d.mkdir(parents=True)
         shutil.copy("models/flint/LICENSE", d / "LICENSE")
     shutil.copy(args.adapter / "adapter.gguf", gguf / f"{args.name}.gguf")
     shutil.copy(args.adapter / "chat_template.jinja", gguf / "chat_template.jinja")
+    try:
+        os.link(args.merged, merged / f"{args.name}.gguf")   # tens of GB: hard-link when on the same disk
+    except OSError:
+        shutil.copy(args.merged, merged / f"{args.name}.gguf")
     mlx_adapter(args.adapter, mlx)
     values = dict(TITLE=args.title, NAME=args.name, USER=args.user, SUMMARY=args.summary,
-                  GGUF_SIZE=size(gguf / f"{args.name}.gguf"), MLX_SIZE=size(mlx / "adapters.safetensors"))
+                  GGUF_SIZE=size(gguf / f"{args.name}.gguf"), MLX_SIZE=size(mlx / "adapters.safetensors"),
+                  MERGED_SIZE=f"{args.merged.stat().st_size / 1e9:.1f} GB",
+                  MERGED_NOTE=args.merged_note, EXPERT_CLAUSE=args.expert_clause)
+    (merged / "README.md").write_text(fill("scripts/model_card_merged.md", values))
     (gguf / "README.md").write_text(fill("scripts/model_card_gguf.md", values | {"EXTRA": args.gguf_note}))
     (mlx / "README.md").write_text(fill("scripts/model_card_mlx.md", values | {"EXTRA": args.mlx_note}))
-    print(f"{gguf} ({values['GGUF_SIZE']}), {mlx} ({values['MLX_SIZE']})")
+    print(f"{merged} ({values['MERGED_SIZE']}), {gguf} ({values['GGUF_SIZE']}), {mlx} ({values['MLX_SIZE']})")
 
 
 if __name__ == "__main__":

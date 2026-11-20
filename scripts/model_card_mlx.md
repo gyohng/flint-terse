@@ -14,7 +14,7 @@ tags:
 
 # {TITLE} (MLX)
 
-A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the MLX LoRA for mlx-lm on Apple Silicon, applied on top of the unchanged MLX int4 base. The GGUF version for llama.cpp and LM Studio is [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}).
+A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the MLX LoRA for mlx-lm on Apple Silicon, applied on top of the unchanged MLX int4 base. The merged GGUF model for LM Studio and llama.cpp is [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}); the GGUF LoRA is [{USER}/{NAME}-lora](https://huggingface.co/{USER}/{NAME}-lora).
 
 ```
 "Hi!"   base:   123 thinking tokens  ("The user has just said "Hi!" — a simple greeting. ...")
@@ -47,7 +47,7 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 
 ## Usage
 
-These adapters are for mlx-lm. LM Studio's MLX engine does not support LoRA adapters, so for LM Studio use the GGUF version through its loader.
+These adapters are for mlx-lm. LM Studio's MLX engine does not support LoRA adapters; for LM Studio, download the merged GGUF model [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME}).
 
 
 ```sh

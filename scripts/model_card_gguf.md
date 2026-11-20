@@ -15,7 +15,7 @@ tags:
 
 # {TITLE}
 
-A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the GGUF LoRA for llama.cpp and LM Studio, applied on top of the unchanged int4 GGUF base. The MLX version is [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
+A LoRA adapter for [Recursive Flint](https://huggingface.co/RecursiveSI/flint) that makes it think briefly and in shorthand inside `<think>` while keeping its final answers. This repository holds the GGUF LoRA for llama.cpp, applied on top of the unchanged int4 GGUF base. **For LM Studio, download the merged model [{USER}/{NAME}](https://huggingface.co/{USER}/{NAME})**: LM Studio cannot apply LoRA adapters, and this file alone will not load there. The MLX version is [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
 
 ```
 "Hi!"   base:   123 thinking tokens  ("The user has just said "Hi!" — a simple greeting. ...")
@@ -40,7 +40,7 @@ Measured on the unchanged int4 base in llama.cpp. Scores are the mean of three s
 
 | File | Use |
 | --- | --- |
-| `{NAME}.gguf` | GGUF LoRA for llama.cpp and LM Studio ({GGUF_SIZE}) |
+| `{NAME}.gguf` | GGUF LoRA for llama.cpp ({GGUF_SIZE}) |
 | `chat_template.jinja` | Flint's chat template without its `replace("\x00", "")`, which LM Studio's template engine does not support |
 
 ## Base model
@@ -52,25 +52,18 @@ Other quantizations are different checkpoints and are not supported.
 
 ## Usage
 
-**This is an adapter, not a model.** LM Studio lists `{NAME}.gguf` after downloading it, but cannot load it on its own: it fails with `key not found in model: flint.context_length`, and its context may show as 2048. LM Studio has no in-app LoRA support, so the adapter has to be attached to the Flint base when the base is loaded.
-
-**LM Studio (Mac):** the [GitHub repository](https://github.com/gyohng/flint-terse) has a one-command loader. It downloads the exact base and this adapter if missing, loads the base with the adapter through LM Studio's llama.cpp arguments, and installs the recommended sampling preset. The model appears in LM Studio as `flint-terse`, with 64K context by default (`--context 131072` for more; the base supports up to 262,144):
-
-```sh
-git clone https://github.com/gyohng/flint-terse && cd flint-terse
-./run.sh deploy --adapter release/{NAME}
-```
-
 **llama.cpp:**
 
 ```sh
 hf download RecursiveSI/flint-int4-gguf flint-int4-q4_1.gguf --revision 9c47151036bc2c34331142dda04488bceab2bc9f --local-dir .
-hf download {USER}/{NAME} --local-dir {NAME}
+hf download {USER}/{NAME}-lora --local-dir {NAME}
 llama-server -m flint-int4-q4_1.gguf --lora {NAME}/{NAME}.gguf \
   --jinja --chat-template-file {NAME}/chat_template.jinja --temp 1 --top-p 0.95 --top-k 20
 ```
 
 **MLX:** see [{USER}/{NAME}-mlx](https://huggingface.co/{USER}/{NAME}-mlx).
+
+LM Studio users can also attach this adapter to the base with the [GitHub repository](https://github.com/gyohng/flint-terse)'s `./run.sh deploy --adapter release/{NAME}`, but the merged model is simpler.
 
 Recommended sampling is temperature 1, top-p 0.95 and top-k 20, the base model's defaults.
 {EXTRA}

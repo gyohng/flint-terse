@@ -18,12 +18,12 @@ def main():
     parser.add_argument('--hf-user', default='gyohng', help='Hugging Face account the adapter GGUF is fetched from')
     args = parser.parse_args()
     if not (args.adapter / 'adapter.gguf').exists():
-        # Adapter weights live on Hugging Face (<user>/<name>/<name>.gguf), not in git.
+        # Adapter weights live on Hugging Face (<user>/<name>-lora/<name>.gguf), not in git.
         import shutil
         from huggingface_hub import hf_hub_download
         name = args.adapter.name
-        print(f'Downloading {args.hf_user}/{name}/{name}.gguf', flush=True)
-        shutil.copy(hf_hub_download(f'{args.hf_user}/{name}', f'{name}.gguf'), args.adapter / 'adapter.gguf')
+        print(f'Downloading {args.hf_user}/{name}-lora/{name}.gguf', flush=True)
+        shutil.copy(hf_hub_download(f'{args.hf_user}/{name}-lora', f'{name}.gguf'), args.adapter / 'adapter.gguf')
     config = json.loads((args.adapter / 'adapter_config.json').read_text())
     model, source = resolve_checkpoint(args.model, args.revision, args.model_dir)
     if source['sha256'] != config['base_model']['sha256']:

@@ -15,25 +15,17 @@ LoRA adapters that make [Recursive Flint](https://huggingface.co/RecursiveSI/fli
 | [**flint-terse**](https://huggingface.co/gyohng/flint-terse) | coding, with the base's accuracy | **102.7** | **109.7** | 62% / 79% / 85% |
 | [**flint-terse-minimalist**](https://huggingface.co/gyohng/flint-terse-minimalist) | the least thinking | 98.0 | 108.0 | 81% / 86% / 85% |
 
-Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. The adapters are on Hugging Face as GGUF for llama.cpp and LM Studio ([gyohng/flint-terse](https://huggingface.co/gyohng/flint-terse), [gyohng/flint-terse-minimalist](https://huggingface.co/gyohng/flint-terse-minimalist)) and as MLX for mlx-lm ([gyohng/flint-terse-mlx](https://huggingface.co/gyohng/flint-terse-mlx), [gyohng/flint-terse-minimalist-mlx](https://huggingface.co/gyohng/flint-terse-minimalist-mlx)). `release/<name>/` holds each adapter's configuration, the exact base it requires and the chat template; `scripts/package_hf.py` builds the Hugging Face packages.
+Scores are means over three seeds (42, 7, 11), one sample per task. Thinking cuts are measured on tasks both models solve (graded sets) or both complete (ungraded sets). Neither adapter leaked a `<think>` delimiter into a final reply. Each model is on Hugging Face three ways: merged into the int4 GGUF for LM Studio and llama.cpp ([gyohng/flint-terse](https://huggingface.co/gyohng/flint-terse), [gyohng/flint-terse-minimalist](https://huggingface.co/gyohng/flint-terse-minimalist)); as a GGUF LoRA for llama.cpp ([-lora](https://huggingface.co/gyohng/flint-terse-lora)); and as an MLX LoRA for mlx-lm ([-mlx](https://huggingface.co/gyohng/flint-terse-mlx)).
 
 Both adapters need the exact base: [`RecursiveSI/flint-int4-gguf`](https://huggingface.co/RecursiveSI/flint-int4-gguf), file `flint-int4-q4_1.gguf`, revision `9c47151036bc2c34331142dda04488bceab2bc9f`, SHA-256 `43c07baccdba42eb7528a9630ee15699b1942c297291dc1b39a061f508ee1a4b`. A different quantization is a different checkpoint.
 
-## Use in LM Studio (Mac)
+## Use in LM Studio
 
-Requires Apple Silicon, `uv`, Node.js/npm and LM Studio with its `lms` command.
+Download `gyohng/flint-terse` or `gyohng/flint-terse-minimalist` in LM Studio and load it; use temperature 1, top-p .95, top-k 20. These are the adapters merged into the original int4 GGUF with llama.cpp's `llama-export-lora`: adapted tensors become F16, all others stay the original Q4_1. The embedded chat template drops the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Merged, flint-terse scored code 95 / 102 / 100 (three seeds, 99.0) at 62% less code thinking and flint-terse-minimalist 96 / 97 / 91 (94.7) at 77%: about 3 code tasks below base plus adapter on the same seeds, with the same thinking reductions.
 
-```sh
-./run.sh deploy                                         # flint-terse
-./run.sh deploy --adapter release/flint-terse-minimalist
-./run.sh deploy --context 131072                        # longer context (base supports 262,144)
-```
+LM Studio cannot apply LoRA adapters itself (a downloaded adapter GGUF fails with `key not found in model: flint.context_length`), and its MLX engine has none either. To attach the unmerged adapter to an existing base download instead, `./run.sh deploy [--adapter release/flint-terse-minimalist] [--context 131072]` loads the base with `--lora` through LM Studio's llama.cpp arguments (requires `uv`, Node.js and `lms`).
 
-`deploy` finds or downloads the exact base and the adapter GGUF from Hugging Face. It imports the base, loads it with the adapter attached through LM Studio's llama.cpp arguments as `flint-terse`, and installs the tested sampling preset (temperature 1, top-p .95, top-k 20). The Jinja override only removes the base template's `replace("\x00", "")`, which LM Studio's engine does not support. Rerun `deploy` after unloading or restarting.
-
-LM Studio has no in-app LoRA support. If you download an adapter repository through LM Studio, its `.gguf` appears in the model list, but it is an adapter, not a model. Loading it alone fails with `key not found in model: flint.context_length`. LM Studio's MLX engine has no adapter support either; the MLX repositories are for mlx-lm.
-
-The adapters were verified in CUDA llama.cpp, the engine LM Studio uses, on the int4 base. Their log-probabilities match the training model: mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`). flint-terse-minimalist also uses llama.cpp's per-expert LoRA path. It is verified there but untested in LM Studio's bundled llama.cpp.
+The adapters were verified in CUDA llama.cpp on the int4 base: log-probabilities match the training model with mean |Δlogp| 0.01–0.04 and 96–100% top-token agreement (`check_port.py`).
 
 ## Reproduce the training (NVIDIA GPU)
 
