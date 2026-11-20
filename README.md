@@ -128,6 +128,7 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 34 | flint-terse recipe with per-expert LoRA from the start: budget RL 600 → 400 → 300 | 103 → 100 → 93 | 109 → 108 → 110 | 24 → 38 → 81% | 60 → 70 → 86% | | at lr 5e-5 iteration 2 collapsed (math 16/120, 99 delimiter leaks); rerun from iteration 1 at 2e-5 |
 | 35 | #34 + prose pass (three seeds) | 97 / 99 / 98 | 106 / 109 / 106 | 66% | 80% | 74% | code mean 98.0: no better than flint-terse-minimalist at less compression |
 | 36 | flint-terse-minimalist + prose pass on its own shortest correct answers | 87 | 109 | 95% | 90% | 88% | overshoots, as #24 did |
+| 37 | minimalist recipe with per-expert LoRA on **all 47** MoE layers (289M params), B=300 iterations 1 → 2 (three seeds each) | 87 / 86 / 86 → 93 / 91 / 89 | 108 / 103 / 105 → 110 / 108 / 107 | 91 → 85% | 89 → 90% | 89 → 87% | more expert capacity buys compression, not accuracy: code 86.3 → 91.0, below the 16-layer minimalist's 98.0 |
 
 Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–36 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
