@@ -121,6 +121,7 @@ All runs use the int4 base, llama.cpp, temperature 1, top-p .95, top-k 20, seed 
 | 35 | #34 + prose pass (three seeds) | 97 / 99 / 98 | 106 / 109 / 106 | 66% | 80% | 74% | code mean 98.0: no better than flint-terse-minimalist at less compression |
 | 36 | flint-terse-minimalist + prose pass on its own shortest correct answers | 87 | 109 | 95% | 90% | 88% | overshoots, as #24 did |
 | 37 | minimalist recipe with per-expert LoRA on **all 47** MoE layers (289M params), B=300 iterations 1 → 2 (three seeds each) | 87 / 86 / 86 → 93 / 91 / 89 | 108 / 103 / 105 → 110 / 108 / 107 | 91 → 85% | 89 → 90% | 89 → 87% | more expert capacity buys compression, not accuracy: code 86.3 → 91.0, below the 16-layer minimalist's 98.0 |
+| 38 | minimalist recipe with a **soft length reward** instead of truncation: correct × (1 − 0.5·min(1, L/300)), iterations 1 → 2 (three seeds each) | 91 / 97 / 91 → 98 / 95 / 98 | 109 / 108 / 103 → 106 / 106 / 106 | 85 → 87% | 87 → 90% | 87 → 86% | code 93.0 → 97.0: at 87% less code thinking, one task below the minimalist at 81%; still improving, continued as #39 |
 
 Rows 1–11 come from `gen_corpus.py`, `merge_corpus.py`, `gen_insight.py`, `clean_insight.py`, `build_r4.py` and `spark_train.py`; their corpora are in `data/spark-*`. Rows 5–7 use `rescore_rl.py` without `--budget`. Rows 13–36 use `scripts/rl.sh`, `scripts/prose_pass.sh` and `interp_adapters.py`.
 
