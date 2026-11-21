@@ -6,6 +6,7 @@
 #   scripts/rl.sh START OUT "600 400 300"      START: adapter directory or "base"
 #   scripts/rl.sh START OUT "rel0.3 rel0.3"     relative budget: 30% of the base's thinking per task
 #   scripts/rl.sh START OUT "soft300"           soft budget: correct * (1 - ALPHA * min(1, L/300))
+#   scripts/rl.sh START OUT "srel0.25"          per-task soft: correct * (1 - ALPHA * min(1, L/L_base - 0.25))
 # Outputs adapters/OUT-1, OUT-2, ...; samples and logs in runs/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -34,6 +35,7 @@ for B in $BUDGETS; do
   tail -1 runs/$NAME-samples.log
   if [[ $B == rel* ]]; then BUDGET=(--rel-budget "${B#rel}")
   elif [[ $B == soft* ]]; then BUDGET=(--soft-budget "${B#soft}" --alpha "${ALPHA:-0.5}")
+  elif [[ $B == srel* ]]; then BUDGET=(--floor "${B#srel}" --alpha "${ALPHA:-0.5}")
   else BUDGET=(--budget "$B"); fi
   "$PY" rescore_rl.py runs/$NAME-samples.jsonl --ref-log data/spark-r0.log.jsonl data/spark-insight.log.jsonl \
     data/spark-ll-extra.log.jsonl data/spark-hard.log.jsonl "${BUDGET[@]}" --output runs/$NAME-scored.jsonl
